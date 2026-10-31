@@ -54,3 +54,7 @@ On an Apple M4 with 16 GB RAM, a 30-second clip takes about 30–35 seconds. It 
 
 - Skim the captions before posting. The model sometimes uses textbook spellings ("bhaarat", "vah") or mishears a word.
 - Clear speech with quiet background music gives the best results.
+
+## License
+
+[MIT](LICENSE) for this code. The models it downloads have their own licenses; see their Hugging Face pages linked above.
