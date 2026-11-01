@@ -1,6 +1,6 @@
-import { DEFAULT_STYLE, PRESETS, captionAt, captionBand, captionBox, drawCaption, exportStates, normalizeStyle, presetStyle } from './render.js?v=7';
-import { fontInfo, getFonts, loadFont, nearestWeight } from './fonts.js?v=7';
-import { Timeline, fmtTime } from './timeline.js?v=7';
+import { DEFAULT_STYLE, PRESETS, captionAt, captionBand, captionBox, drawCaption, exportStates, normalizeStyle, presetStyle } from './render.js?v=8';
+import { fontInfo, getFonts, loadFont, nearestWeight } from './fonts.js?v=8';
+import { Timeline, fmtTime } from './timeline.js?v=8';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -230,6 +230,7 @@ async function openProject(pid) {
   $('#home').hidden = true;
   $('#editor').hidden = false;
   $('#project-name').value = p.name;
+  $('#hdr-field').hidden = $('#hdr-badge').hidden = !p.meta.hdr;
   video.src = `/api/projects/${pid}/video`;
   await new Promise((r) => { video.onloadedmetadata = r; video.onerror = r; });
   fitStage();
@@ -608,7 +609,7 @@ const fmt = {
   shadowOpacity: pct, bgOpacity: pct, emScale: (v) => `${(+v).toFixed(2)}×`,
   letterSpacing: (v) => (+v).toFixed(2), emLetterSpacing: (v) => (+v).toFixed(2),
   positionY: (v) => `${Math.round(v)}%`, maxWidth: (v) => `${v}%`, lineHeight: (v) => (+v).toFixed(2),
-  shadowBlur: (v) => v, shadowOffset: (v) => v, bgRadius: (v) => v,
+  shadowBlur: (v) => v, shadowOffset: (v) => v, bgRadius: (v) => v, hdrBoost: pct,
 };
 
 // Which style keys each font button / weight list controls.
@@ -1028,7 +1029,7 @@ $('#btn-export').onclick = async () => {
     await flush();
     await api.json(`/api/projects/${pid}/export/render`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ width: W, height: band.height, offsetY: band.top, frames }),
+      body: JSON.stringify({ width: W, height: band.height, offsetY: band.top, frames, hdrBoost: app.style.hdrBoost }),
     });
     await poll(pid, (s) => setP(s.stage || 'Rendering…', 0.4 + (s.progress || 0) * 0.6));
     setP('Done! Your captioned video is ready.', 1);

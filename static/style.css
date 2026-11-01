@@ -274,3 +274,5 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
 .saved-item .acts .star.on { color: #ffd84d; }
 .saved-item .acts .del:hover { color: var(--danger); }
 #ask-msg { color: var(--text); white-space: pre-line; }
+.hdr-badge { font: 700 10.5px system-ui; letter-spacing: .08em; padding: 3px 7px; border-radius: 5px;
+  background: linear-gradient(90deg, #ffb347, #ff5f9e, #7c5cff); color: #fff; }

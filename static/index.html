@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hinglish Captions</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%237c5cff'/><rect x='6' y='19' width='20' height='5' rx='2' fill='white'/><rect x='9' y='11' width='14' height='5' rx='2' fill='%23ffe600'/></svg>">
-  <link rel="stylesheet" href="style.css?v=7">
+  <link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
   <!-- Home: upload + recent projects -->
@@ -168,6 +168,11 @@
           <div class="field"><label>Max width <output data-o="maxWidth"></output></label><input type="range" data-k="maxWidth" min="30" max="100" step="1"></div>
           <div class="field"><label>Line height <output data-o="lineHeight"></output></label><input type="range" data-k="lineHeight" min="0.7" max="2" step="0.01"></div>
         </div>
+        <div class="field" id="hdr-field" hidden>
+          <label>HDR caption brightness <output data-o="hdrBoost"></output></label>
+          <input type="range" data-k="hdrBoost" min="1" max="3" step="0.05">
+          <p class="hint">This video is HDR. At 100%, caption white sits at the broadcast standard for graphics, so it looks right next to your footage. Go higher to make captions glow like HDR highlights.</p>
+        </div>
         <div class="field">
           <label>Animation</label>
           <div class="seg" data-k="animation"><button data-v="none">None</button><button data-v="fade">Fade</button><button data-v="rise">Rise</button><button data-v="pop">Pop</button></div>
@@ -213,6 +218,7 @@
       <div class="transport">
         <button id="btn-play" class="ghost icon play" title="Play / pause (Space)">▶</button>
         <span id="time" class="time">0:00.00 / 0:00.00</span>
+        <span id="hdr-badge" class="hdr-badge" title="HDR video: exported as 10-bit HDR with HDR-correct captions. The preview here is approximate." hidden>HDR</span>
       </div>
     </section>
 
@@ -263,6 +269,6 @@
   </dialog>
 
   <div id="toast" class="toast" hidden></div>
-  <script type="module" src="js/main.js?v=7"></script>
+  <script type="module" src="js/main.js?v=8"></script>
 </body>
 </html>

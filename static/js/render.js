@@ -29,6 +29,7 @@ export const DEFAULT_STYLE = {
   shadowColor: '#000000', shadowOpacity: 0.6, shadowBlur: 12, shadowOffset: 4,
   bgEnabled: false, bgColor: '#000000', bgOpacity: 0.55, bgRadius: 25,
   animation: 'pop',     // none | pop | fade | rise
+  hdrBoost: 1,          // HDR videos: caption white relative to the broadcast graphics level
 };
 
 const clean = { highlightMode: 'none', activeScale: 1, strokeWidth: 0, bgEnabled: false, display: 'full', emphasis: 'off', layout: 'flow' };

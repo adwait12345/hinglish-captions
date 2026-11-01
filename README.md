@@ -28,6 +28,7 @@ interesting hai to
 - **Timeline.** It shows the audio waveform. Drag captions to move them, drag their edges to retime them, and split (S), merge (M), add (A) or delete them. Undo and redo work with ⌘Z and ⇧⌘Z.
 - **What you see is what you get.** The preview and the export use the same renderer, so the burned-in video matches the editor pixel for pixel, in full resolution with the original audio.
 - **Autosave.** Projects are saved as you work and listed on the home screen.
+- **HDR support.** iPhone HLG and HDR10 videos stay 10-bit HDR (HEVC). Captions are converted into HDR colour with white at the broadcast graphics level (ITU-R BT.2408, 75% HLG / 203 nits), so they don't look dim or washed out next to your footage. An HDR brightness slider pushes them brighter if you want them to glow.
 - **Spelling that matches how you type.** Texting-style Hinglish is on by default, so the model's formal spellings become what people actually write: *vah → woh, tumhen → tumhe, kuchh → kuch, uske lie → uske liye, karoonga → karunga*.
 - **Your own dictionary.** Add words or phrases to always fix (*kiloertz → kHz*, *mac book → MacBook*). New videos use it automatically, and **Apply to this video** fixes existing captions (undo-able). When you correct a word in the Captions tab, it offers to always fix it that way.
 - **My styles.** Save your look and reuse it with one click. Star one, and every new video starts in it.

@@ -94,6 +94,9 @@ def probe(path):
         "width": w, "height": h, "fps": round(fps, 3) or 30.0,
         "duration": float(info["format"].get("duration") or v.get("duration") or 0),
         "hasAudio": any(s["codec_type"] == "audio" for s in info["streams"]),
+        # HLG = iPhone/Android HDR, PQ = HDR10. Captions need converting into these.
+        "hdr": {"arib-std-b67": "hlg", "smpte2084": "pq"}.get(v.get("color_transfer")),
+        "colorPrimaries": v.get("color_primaries"), "colorSpace": v.get("color_space"),
     }
 
 
@@ -180,7 +183,11 @@ def create_project(video: UploadFile = File(...)):
 
 @app.get("/api/projects/{pid}")
 def get_project(pid: str):
-    return load_project(pid)
+    p = load_project(pid)
+    if "hdr" not in p["meta"]:  # projects made before HDR support
+        p["meta"].update({k: v for k, v in probe(source_file(pid)).items() if k in ("hdr", "colorPrimaries", "colorSpace")})
+        save_project(p)
+    return p
 
 
 @app.put("/api/projects/{pid}")
@@ -382,6 +389,48 @@ def fonts():
 # Export: overlay the browser-rendered caption frames with ffmpeg
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# HDR: captions are drawn in normal (SDR) colours, so for HDR videos they're
+# converted into the video's HDR signal: sRGB -> linear light -> BT.2020
+# colours -> HLG or PQ, with white at the broadcast "graphics white" level
+# (ITU-R BT.2408: 75% HLG / 203 nits). `boost` raises caption brightness above
+# that if you want them to pop like HDR highlights.
+# ---------------------------------------------------------------------------
+
+SRGB_TO_LINEAR = "if(lte(val/maxval\\,0.04045)\\,val/maxval/12.92\\,pow((val/maxval+0.055)/1.055\\,2.4))*maxval"
+BT709_TO_BT2020 = ("rr=0.6274:rg=0.3293:rb=0.0433:gr=0.0691:gg=0.9195:gb=0.0114:"
+                   "br=0.0164:bg=0.0880:bb=0.8956")
+
+
+def hdr_encode_expr(kind, boost):
+    if kind == "hlg":
+        e = f"min(val/maxval*{0.26496 * boost:.6f}\\,1)"  # 0.26496 -> 75% HLG signal
+        return (f"if(lte({e}\\,1/12)\\,sqrt(3*{e})\\,"
+                f"0.17883277*log(12*{e}-0.28466892)+0.55991073)*maxval")
+    y = f"pow(min(val/maxval*{203 * boost / 10000:.6f}\\,1)\\,0.1593017578125)"  # 203 nits -> PQ
+    return f"pow((0.8359375+18.8515625*{y})/(1+18.6875*{y})\\,78.84375)*maxval"
+
+
+def caption_filter(meta, offset_y, boost):
+    out = f"overlay=0:{offset_y}:eof_action=repeat:shortest=1"
+    if not meta.get("hdr"):
+        return f"[1:v]format=rgba[c];[0:v][c]{out}:format=auto,format=yuv420p[v]"
+    enc = hdr_encode_expr(meta["hdr"], boost)
+    return (f"[1:v]format=rgba64le,lutrgb=r='{SRGB_TO_LINEAR}':g='{SRGB_TO_LINEAR}':b='{SRGB_TO_LINEAR}',"
+            f"colorchannelmixer={BT709_TO_BT2020},lutrgb=r='{enc}':g='{enc}':b='{enc}',"
+            f"scale=out_color_matrix=bt2020:out_range=tv,format=yuva444p10le[c];"
+            f"[0:v][c]{out}:format=yuv420p10,format=yuv420p10le[v]")
+
+
+def video_encoder(meta):
+    if not meta.get("hdr"):
+        return ["-c:v", "libx264", "-preset", "medium", "-crf", "17", "-pix_fmt", "yuv420p"]
+    trc = {"hlg": "arib-std-b67", "pq": "smpte2084"}[meta["hdr"]]
+    return ["-c:v", "libx265", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1",
+            "-x265-params", f"log-level=error:colorprim=bt2020:transfer={trc}:colormatrix=bt2020nc",
+            "-color_primaries", "bt2020", "-color_trc", trc, "-colorspace", "bt2020nc"]
+
+
 def run_export(pid, manifest, out_dir):
     job = jobs[pid]
     try:
@@ -407,17 +456,17 @@ def run_export(pid, manifest, out_dir):
         lines += ["file blank.png", f"duration {tail:.4f}", "file blank.png"]
         (out_dir / "frames.txt").write_text("\n".join(lines) + "\n")
 
-        # shortest=1: stop with the source video (the caption track runs a bit past it)
-        overlay = (f"[1:v]format=rgba[c];[0:v][c]overlay=0:{offset_y}:eof_action=repeat:shortest=1:format=auto,"
-                   "format=yuv420p[v]")
+        if "hdr" not in meta:  # projects made before HDR support
+            meta.update(probe(source_file(pid)))
+        boost = min(max(float(manifest.get("hdrBoost", 1.0)), 1.0), 3.8)
+        overlay = caption_filter(meta, offset_y, boost)
         out = out_dir / "output.mp4"
 
         def ffmpeg(audio_args):
             cmd = ["ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-progress", "pipe:1",
                    "-i", str(source_file(pid)), "-f", "concat", "-safe", "0", "-i", str(out_dir / "frames.txt"),
                    "-filter_complex", overlay, "-map", "[v]", "-map", "0:a?",
-                   "-c:v", "libx264", "-preset", "medium", "-crf", "17", "-pix_fmt", "yuv420p",
-                   *audio_args, "-movflags", "+faststart", str(out)]
+                   *video_encoder(meta), *audio_args, "-movflags", "+faststart", str(out)]
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             for line in proc.stdout:
                 if line.startswith("out_time_us=") and meta["duration"]:
@@ -428,7 +477,7 @@ def run_export(pid, manifest, out_dir):
                         pass
             return proc.wait(), proc.stderr.read()
 
-        job.update(stage="Burning captions into the video…", progress=0)
+        job.update(stage="Burning captions into the HDR video…" if meta.get("hdr") else "Burning captions into the video…", progress=0)
         code, err = ffmpeg(["-c:a", "copy"])
         if code != 0:  # source audio can't go in an .mp4 as-is: re-encode it
             code, err = ffmpeg(["-c:a", "aac", "-b:a", "192k"])
