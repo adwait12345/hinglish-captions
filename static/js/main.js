@@ -1,5 +1,5 @@
-import { DEFAULT_STYLE, PRESETS, captionAt, captionBox, drawCaption, exportStates, presetStyle } from './render.js';
-import { getFonts, googleWeights, loadFont, nearestWeight } from './fonts.js';
+import { DEFAULT_STYLE, PRESETS, captionAt, captionBand, captionBox, drawCaption, exportStates, normalizeStyle, presetStyle } from './render.js';
+import { fontInfo, getFonts, loadFont, nearestWeight } from './fonts.js';
 import { Timeline, fmtTime } from './timeline.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -110,7 +110,7 @@ const app = {
     const { captions, style } = JSON.parse(this.history[pos]);
     const sel = this.captions.findIndex((c) => c.id === this.selectedId);
     this.captions = withIds(captions);
-    this.style = style;
+    this.style = normalizeStyle(style);
     this.selectedId = this.captions[sel]?.id ?? null;
     syncStyleControls();
     loadFont(this.style).then(requestDraw);
@@ -198,7 +198,7 @@ async function openProject(pid) {
   const p = await api.json(`/api/projects/${pid}`);
   app.project = p;
   app.captions = withIds(p.captions || []);
-  app.style = { ...DEFAULT_STYLE, ...(p.style || {}) };
+  app.style = normalizeStyle(p.style || {});
   app.selectedId = null;
   app.history = [JSON.stringify({ captions: plain(app.captions), style: app.style })];
   app.hpos = 0;
@@ -322,20 +322,24 @@ $('#btn-regroup').addEventListener('click', async () => {
 // Caption list (left panel)
 // ---------------------------------------------------------------------------
 
+// Caption text as typed in the list: words wrapped in *stars* are accents.
+const captionText = (cap) => cap.words.map((w) => (w.em ? `*${w.text}*` : w.text)).join(' ');
+const plainText = (cap) => cap.words.map((w) => w.text).join(' ');
+
 function setCaptionText(cap, text) {
-  const tokens = text.split(/\s+/).filter(Boolean);
+  const tokens = wordsFromText(text);
   if (!tokens.length) return;
   if (tokens.length === cap.words.length) {
-    tokens.forEach((t, i) => (cap.words[i].text = t));
+    tokens.forEach((t, i) => { cap.words[i].text = t.text; cap.words[i].em = !!t.em; });
     return;
   }
   // Word count changed: share the caption's time out by word length.
-  const weights = tokens.map((t) => t.length + 1);
+  const weights = tokens.map((t) => t.text.length + 1);
   const total = weights.reduce((a, b) => a + b, 0);
   let t = cap.start;
-  cap.words = tokens.map((text, i) => {
+  cap.words = tokens.map((tok, i) => {
     const d = ((cap.end - cap.start) * weights[i]) / total;
-    const w = { text, start: t, end: t + d };
+    const w = { text: tok.text, start: t, end: t + d, ...(tok.em ? { em: true } : {}) };
     t += d;
     return w;
   });
@@ -351,14 +355,14 @@ function renderList() {
     $('.ts', li).textContent = `${fmtTime(cap.start)} – ${fmtTime(cap.end)}`;
     $('.ts', li).onclick = () => { app.select(cap.id, false); app.seek(cap.start + 0.001); timeline.scrollToTime(cap.start); };
     const ta = $('textarea', li);
-    ta.value = cap.words.map((w) => w.text).join(' ');
+    ta.value = captionText(cap);
     ta.addEventListener('focus', () => { app.select(cap.id, false); if (!app.playing) app.seek(cap.start + 0.001); timeline.scrollToTime(cap.start); });
     ta.addEventListener('input', () => {
       setCaptionText(cap, ta.value);
-      $(`.tl-cap[data-id="${cap.id}"] .tl-text`).textContent = ta.value;
+      $(`.tl-cap[data-id="${cap.id}"] .tl-text`).textContent = plainText(cap);
       requestDraw();
     });
-    ta.addEventListener('change', () => { ta.value = cap.words.map((w) => w.text).join(' '); app.onCaptionsChanged(true, true); });
+    ta.addEventListener('change', () => { ta.value = captionText(cap); app.onCaptionsChanged(true, true); });
     ta.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); ta.blur(); } });
     return li;
   }));
@@ -559,11 +563,19 @@ function hitCaption(e) {
 // Style panel
 // ---------------------------------------------------------------------------
 
+const pct = (v) => `${Math.round(v * 100)}%`;
 const fmt = {
-  fontSize: (v) => (+v).toFixed(1), activeScale: (v) => `${Math.round(v * 100)}%`, strokeWidth: (v) => v,
-  shadowOpacity: (v) => `${Math.round(v * 100)}%`, bgOpacity: (v) => `${Math.round(v * 100)}%`,
+  fontSize: (v) => (+v).toFixed(1), activeScale: pct, strokeWidth: (v) => v,
+  shadowOpacity: pct, bgOpacity: pct, emScale: (v) => `${(+v).toFixed(2)}×`,
+  letterSpacing: (v) => (+v).toFixed(2), emLetterSpacing: (v) => (+v).toFixed(2),
   positionY: (v) => `${Math.round(v)}%`, maxWidth: (v) => `${v}%`, lineHeight: (v) => (+v).toFixed(2),
   shadowBlur: (v) => v, shadowOffset: (v) => v, bgRadius: (v) => v,
+};
+
+// Which style keys each font button / weight list controls.
+const FONT_KEYS = {
+  base: { family: 'fontFamily', source: 'fontSource', weight: 'fontWeight', italic: 'fontItalic' },
+  accent: { family: 'emFontFamily', source: 'emFontSource', weight: 'emFontWeight', italic: 'emItalic' },
 };
 
 function syncStyleControls() {
@@ -575,62 +587,68 @@ function syncStyleControls() {
     else if (el.tagName !== 'SELECT') el.value = s[k];
   });
   $$('[data-o]').forEach((o) => (o.value = (fmt[o.dataset.o] || String)(s[o.dataset.o])));
-  $$('[data-show]').forEach((el) => {
-    const [k, v] = el.dataset.show.split('=');
-    el.hidden = v ? String(s[k]) !== v : !s[k];
+  $$('[data-show], [data-hide]').forEach((el) => {
+    const rule = el.dataset.show ?? el.dataset.hide;
+    const [k, v] = rule.split('=');
+    const match = v ? String(s[k]) === v : !!s[k];
+    el.hidden = el.dataset.show !== undefined ? !match : match;
   });
-  const fn = $('#font-name');
-  fn.textContent = s.fontFamily;
-  fn.style.fontFamily = `"${s.fontFamily}", sans-serif`;
-  fn.style.fontWeight = s.fontWeight;
+  $$('.font-btn').forEach((btn) => {
+    const keys = FONT_KEYS[btn.dataset.font];
+    const fn = $('.font-name', btn);
+    fn.textContent = s[keys.family];
+    Object.assign(fn.style, { fontFamily: `"${s[keys.family]}", sans-serif`, fontWeight: s[keys.weight], fontStyle: s[keys.italic] ? 'italic' : 'normal' });
+  });
   syncWeights();
 }
 
+const WEIGHT_NAMES = { 100: 'Thin', 200: 'Extra Light', 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'Semi Bold', 700: 'Bold', 800: 'Extra Bold', 900: 'Black' };
 async function syncWeights() {
   const s = app.style;
-  const weights = s.fontSource === 'google' ? await googleWeights(s.fontFamily) : [100, 200, 300, 400, 500, 600, 700, 800, 900];
-  const names = { 100: 'Thin', 200: 'Extra Light', 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'Semi Bold', 700: 'Bold', 800: 'Extra Bold', 900: 'Black' };
-  const sel = $('select[data-k="fontWeight"]');
-  sel.replaceChildren(...weights.map((w) => new Option(`${names[w] || w} ${w}`, w)));
-  sel.value = s.fontWeight;
+  for (const keys of Object.values(FONT_KEYS)) {
+    const { weights } = await fontInfo(s[keys.family], s[keys.source]);
+    const sel = $(`select[data-k="${keys.weight}"]`);
+    sel.replaceChildren(...weights.map((w) => new Option(`${WEIGHT_NAMES[w] || w} ${w}`, w)));
+    sel.value = s[keys.weight];
+  }
 }
 
 function setStyle(patch, commit = true) {
   Object.assign(app.style, patch);
   syncStyleControls();
   requestDraw();
-  renderPresets();
   if (commit) app.commit();
 }
 
 $$('.tab-body [data-k]').forEach((el) => {
   const k = el.dataset.k;
+  const fontChange = /Weight|Italic|^emphasis$/.test(k); // these may need a new font file
+  const apply = (v, commit = true) => {
+    setStyle({ [k]: v }, commit);
+    if (fontChange) loadFont(app.style).then(requestDraw);
+  };
   if (el.classList.contains('seg')) {
-    el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setStyle({ [k]: b.dataset.v }); });
+    el.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) apply(b.dataset.v); });
   } else if (el.type === 'checkbox') {
-    el.addEventListener('change', () => setStyle({ [k]: el.checked }));
-  } else if (el.type === 'range') {
-    el.addEventListener('input', () => setStyle({ [k]: +el.value }, false));
-    el.addEventListener('change', () => app.commit());
-  } else if (el.type === 'color') {
-    el.addEventListener('input', () => setStyle({ [k]: el.value }, false));
+    el.addEventListener('change', () => apply(el.checked));
+  } else if (el.type === 'range' || el.type === 'color') {
+    el.addEventListener('input', () => apply(el.type === 'range' ? +el.value : el.value, false));
     el.addEventListener('change', () => app.commit());
   } else if (el.tagName === 'SELECT') {
-    el.addEventListener('change', () => {
-      setStyle({ [k]: el.dataset.num !== undefined ? +el.value : el.value });
-      loadFont(app.style).then(requestDraw);
-    });
+    el.addEventListener('change', () => apply(el.dataset.num !== undefined ? +el.value : el.value));
   }
 });
 
 function renderPresets() {
-  const wrap = $('#presets');
-  if (!wrap.children.length) {
-    Object.keys(PRESETS).forEach((name) => {
+  for (const wrap of $$('.presets')) {
+    if (wrap.children.length) continue;
+    const group = wrap.dataset.group;
+    Object.entries(PRESETS).filter(([, p]) => (p.group || 'cinematic') === group).forEach(([name, p]) => {
       const b = document.createElement('button');
-      b.className = 'preset';
+      b.className = `preset ${group}`;
       b.title = name;
-      b.innerHTML = '<canvas width="200" height="108"></canvas>';
+      b.innerHTML = '<canvas width="240" height="128"></canvas><span></span>';
+      $('span', b).textContent = name;
       b.onclick = async () => {
         const style = presetStyle(name, app.style);
         await loadFont(style);
@@ -638,35 +656,46 @@ function renderPresets() {
       };
       wrap.appendChild(b);
       const ps = presetStyle(name, DEFAULT_STYLE);
-      loadFont(ps).then(() => drawPreset($('canvas', b), name, ps));
+      loadFont(ps).then(() => drawPreset($('canvas', b), p.sample || `${name} Aa`, ps));
     });
   }
 }
 
-function drawPreset(canvas, name, style) {
-  const ctx = canvas.getContext('2d');
-  const W = 200, H = 108;
-  ctx.clearRect(0, 0, W, H);
-  const s = { ...style, positionY: 50, maxWidth: 95, fontSize: style.fontSize * 2.3, animation: 'none' };
-  const words = name.split(' ').length > 1 ? name.split(' ') : [name, 'Aa'];
-  const cap = { start: 0, end: 9, words: words.map((text, i) => ({ text, start: i * 0.1 - (i === words.length - 1 ? 0.05 : 0), end: 9 })) };
-  drawCaption(ctx, W, H, cap, (words.length - 1) * 0.1, s);
+// Sample text: words in *stars* are accents.
+function wordsFromText(text) {
+  return text.split(/\s+/).filter(Boolean).map((t) => {
+    const m = t.match(/^\*(.+)\*$/);
+    return m ? { text: m[1], em: true } : { text: t };
+  });
 }
 
-// Font picker
+function drawPreset(canvas, sample, style) {
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  const words = wordsFromText(sample);
+  const s = { ...style, positionY: 50, maxWidth: 92, fontSize: style.fontSize * 2.1, animation: 'none', display: 'full' };
+  const cap = { start: 0, end: 9, words: words.map((w, i) => ({ ...w, start: i * 0.1, end: 9 })) };
+  // Highlight the second-to-last word so highlight styles show off.
+  drawCaption(ctx, W, H, cap, Math.max(0, words.length - 2) * 0.1 + 0.01, s);
+}
+
+// Font picker (shared by the text font and the accent font)
 const fontPop = $('#font-pop');
 let fontFilter = 'all';
-$('#font-btn').addEventListener('click', async (e) => {
+let fontTarget = 'base';
+$$('.font-btn').forEach((btn) => btn.addEventListener('click', (e) => {
   e.stopPropagation();
-  if (!fontPop.hidden) return (fontPop.hidden = true);
-  const r = $('#font-btn').getBoundingClientRect();
-  Object.assign(fontPop.style, { left: `${r.left}px`, top: `${Math.min(r.bottom + 6, innerHeight - 430)}px` });
+  if (!fontPop.hidden && fontTarget === btn.dataset.font) return (fontPop.hidden = true);
+  fontTarget = btn.dataset.font;
+  const r = btn.getBoundingClientRect();
+  Object.assign(fontPop.style, { left: `${r.left}px`, top: `${Math.max(8, Math.min(r.bottom + 6, innerHeight - 430))}px` });
   fontPop.hidden = false;
   $('#font-search').value = '';
   $('#font-search').focus();
   renderFontList();
-});
-document.addEventListener('pointerdown', (e) => { if (!fontPop.hidden && !fontPop.contains(e.target) && !e.target.closest('#font-btn')) fontPop.hidden = true; });
+}));
+document.addEventListener('pointerdown', (e) => { if (!fontPop.hidden && !fontPop.contains(e.target) && !e.target.closest('.font-btn')) fontPop.hidden = true; });
 $('#font-search').addEventListener('input', renderFontList);
 $('#font-filter').addEventListener('click', (e) => {
   const b = e.target.closest('button');
@@ -678,6 +707,7 @@ $('#font-filter').addEventListener('click', (e) => {
 
 async function renderFontList() {
   const { google, system } = await getFonts();
+  const current = app.style[FONT_KEYS[fontTarget].family];
   const q = $('#font-search').value.trim().toLowerCase();
   let items = [];
   if (fontFilter !== 'google') items.push(...system.map((f) => ({ family: f, source: 'system', tag: 'On this Mac' })));
@@ -693,7 +723,7 @@ async function renderFontList() {
     $('span', li).textContent = f.family;
     $('small', li).textContent = f.tag;
     if (f.source === 'system') $('span', li).style.fontFamily = `"${f.family}", system-ui`;
-    if (f.family === app.style.fontFamily) li.className = 'cur';
+    if (f.family === current) li.className = 'cur';
     li.onclick = () => chooseFont(f);
     return li;
   }));
@@ -708,9 +738,13 @@ async function renderFontList() {
 
 async function chooseFont(f) {
   fontPop.hidden = true;
-  let weight = app.style.fontWeight;
-  if (f.source === 'google') weight = nearestWeight(await googleWeights(f.family), weight);
-  const next = { fontFamily: f.family, fontSource: f.source, fontWeight: weight };
+  const keys = FONT_KEYS[fontTarget];
+  const info = await fontInfo(f.family, f.source);
+  const next = {
+    [keys.family]: f.family, [keys.source]: f.source,
+    [keys.weight]: nearestWeight(info.weights, app.style[keys.weight]),
+    [keys.italic]: app.style[keys.italic] && info.italics.length > 0, // keep italic only if the font has it
+  };
   await loadFont({ ...app.style, ...next });
   setStyle(next);
 }
@@ -733,7 +767,7 @@ function srtTime(t) {
 }
 
 $('#btn-srt').onclick = () => {
-  const srt = app.captions.map((c, i) => `${i + 1}\n${srtTime(c.start)} --> ${srtTime(c.end)}\n${c.words.map((w) => w.text).join(' ')}\n`).join('\n');
+  const srt = app.captions.map((c, i) => `${i + 1}\n${srtTime(c.start)} --> ${srtTime(c.end)}\n${plainText(c)}\n`).join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([srt], { type: 'application/x-subrip' }));
   a.download = `${app.project.name}.srt`;
@@ -755,14 +789,17 @@ $('#btn-export').onclick = async () => {
     const { width: W, height: H, fps } = app.project.meta;
     const states = exportStates(app.captions, app.style, fps || 30);
     const canvas = document.createElement('canvas');
-    canvas.width = W; canvas.height = H;
     const ctx = canvas.getContext('2d');
+    const band = captionBand(ctx, W, H, app.captions, app.style);
+    canvas.width = W; canvas.height = band.height;
     const fd = new FormData();
     const frames = [];
     for (let i = 0; i < states.length; i++) {
       if (!dlg.open) return;
       const s = states[i];
-      ctx.clearRect(0, 0, W, H);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, W, band.height);
+      ctx.translate(0, -band.top);
       drawCaption(ctx, W, H, s.cap, s.t, app.style);
       const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'));
       const name = `f${String(i).padStart(6, '0')}.png`;
@@ -770,7 +807,7 @@ $('#btn-export').onclick = async () => {
       frames.push({ file: name, start: s.start, end: s.end });
       if (i % 5 === 0) setP(`Drawing captions… ${i + 1} / ${states.length}`, (i / states.length) * 0.3);
     }
-    fd.append('manifest', JSON.stringify({ width: W, height: H, frames }));
+    fd.append('manifest', JSON.stringify({ width: W, height: band.height, offsetY: band.top, frames }));
     await xhrUpload(`/api/projects/${pid}/export`, fd, (f) => setP('Sending to ffmpeg…', 0.3 + f * 0.1));
     await poll(pid, (s) => setP(s.stage || 'Rendering…', 0.4 + (s.progress || 0) * 0.6));
     setP('Done! Your captioned video is ready.', 1);

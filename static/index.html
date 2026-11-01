@@ -66,27 +66,66 @@
 
       <section class="tab-body" data-tab="style" hidden>
         <div class="field">
-          <label>Presets</label>
-          <div id="presets" class="presets"></div>
+          <label>Cinematic</label>
+          <div class="presets" data-group="cinematic"></div>
         </div>
         <div class="field">
+          <label>Social</label>
+          <div class="presets" data-group="social"></div>
+        </div>
+
+        <h4>Text</h4>
+        <div class="field">
           <label>Font</label>
-          <button id="font-btn" class="font-btn"><span id="font-name"></span><span class="chev">▾</span></button>
+          <button class="font-btn" data-font="base"><span class="font-name"></span><span class="chev">▾</span></button>
         </div>
         <div class="grid2">
           <div class="field"><label>Weight</label><select data-k="fontWeight" data-num></select></div>
-          <div class="field"><label>Size <output data-o="fontSize"></output></label><input type="range" data-k="fontSize" min="2" max="16" step="0.1"></div>
+          <label class="check"><input type="checkbox" data-k="fontItalic"> <i>Italic</i></label>
         </div>
         <div class="grid2">
-          <label class="check"><input type="checkbox" data-k="uppercase"> UPPERCASE</label>
-          <div class="field"><label>Text</label><input type="color" data-k="textColor"></div>
+          <div class="field"><label>Size <output data-o="fontSize"></output></label><input type="range" data-k="fontSize" min="2" max="18" step="0.1"></div>
+          <div class="field"><label>Letter spacing <output data-o="letterSpacing"></output></label><input type="range" data-k="letterSpacing" min="-0.08" max="0.5" step="0.01"></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Case</label>
+            <div class="seg" data-k="textCase"><button data-v="none">Aa</button><button data-v="upper">AA</button><button data-v="lower">aa</button></div>
+          </div>
+          <div class="field"><label>Colour</label><input type="color" data-k="textColor"></div>
+        </div>
+
+        <h4>Accent words</h4>
+        <div class="seg" data-k="emphasis"><button data-v="off">Off</button><button data-v="auto">On</button></div>
+        <div data-show="emphasis=auto">
+          <p class="hint">The key word in each caption is picked automatically. To choose yourself, wrap words in *stars* in the Captions tab.</p>
+          <div class="field">
+            <label>Accent font</label>
+            <button class="font-btn" data-font="accent"><span class="font-name"></span><span class="chev">▾</span></button>
+          </div>
+          <div class="grid2">
+            <div class="field"><label>Weight</label><select data-k="emFontWeight" data-num></select></div>
+            <label class="check"><input type="checkbox" data-k="emItalic"> <i>Italic</i></label>
+          </div>
+          <div class="grid2">
+            <div class="field"><label>Size <output data-o="emScale"></output></label><input type="range" data-k="emScale" min="0.6" max="3" step="0.05"></div>
+            <div class="field"><label>Letter spacing <output data-o="emLetterSpacing"></output></label><input type="range" data-k="emLetterSpacing" min="-0.08" max="0.5" step="0.01"></div>
+          </div>
+          <div class="grid2">
+            <div class="field"><label>Case</label>
+              <div class="seg" data-k="emCase"><button data-v="same">=</button><button data-v="none">Aa</button><button data-v="upper">AA</button><button data-v="lower">aa</button></div>
+            </div>
+            <div class="field"><label>Colour</label><input type="color" data-k="emColor"></div>
+          </div>
+          <div class="field"><label>Arrangement</label>
+            <div class="seg" data-k="layout"><button data-v="flow">Inline</button><button data-v="stack">Stacked</button></div>
+          </div>
         </div>
 
         <h4>Highlight spoken word</h4>
         <div class="seg" data-k="highlightMode">
           <button data-v="none">Off</button><button data-v="color">Colour</button><button data-v="box">Box</button>
         </div>
-        <div class="grid2">
+        <div class="grid2" data-hide="highlightMode=none">
           <div class="field"><label>Highlight</label><input type="color" data-k="highlightColor"></div>
           <div class="field" data-show="highlightMode=box"><label>Text on box</label><input type="color" data-k="highlightTextColor"></div>
         </div>
@@ -96,17 +135,17 @@
           <div class="seg" data-k="display"><button data-v="full">All at once</button><button data-v="progressive">As they're said</button></div>
         </div>
 
-        <h4>Outline &amp; shadow</h4>
+        <h4>Outline, shadow &amp; glow</h4>
         <div class="grid2">
           <div class="field"><label>Outline <output data-o="strokeWidth"></output></label><input type="range" data-k="strokeWidth" min="0" max="30" step="1"></div>
           <div class="field"><label>Colour</label><input type="color" data-k="strokeColor"></div>
         </div>
         <div class="grid2">
-          <div class="field"><label>Shadow <output data-o="shadowOpacity"></output></label><input type="range" data-k="shadowOpacity" min="0" max="1" step="0.05"></div>
+          <div class="field"><label>Shadow / glow <output data-o="shadowOpacity"></output></label><input type="range" data-k="shadowOpacity" min="0" max="1" step="0.05"></div>
           <div class="field"><label>Colour</label><input type="color" data-k="shadowColor"></div>
         </div>
         <div class="grid2">
-          <div class="field"><label>Blur <output data-o="shadowBlur"></output></label><input type="range" data-k="shadowBlur" min="0" max="60" step="1"></div>
+          <div class="field"><label>Softness <output data-o="shadowBlur"></output></label><input type="range" data-k="shadowBlur" min="0" max="80" step="1"></div>
           <div class="field"><label>Offset <output data-o="shadowOffset"></output></label><input type="range" data-k="shadowOffset" min="-20" max="20" step="1"></div>
         </div>
 
@@ -122,11 +161,11 @@
         <div class="field"><label>Vertical position <output data-o="positionY"></output></label><input type="range" data-k="positionY" min="5" max="95" step="0.5"></div>
         <div class="grid2">
           <div class="field"><label>Max width <output data-o="maxWidth"></output></label><input type="range" data-k="maxWidth" min="30" max="100" step="1"></div>
-          <div class="field"><label>Line height <output data-o="lineHeight"></output></label><input type="range" data-k="lineHeight" min="0.8" max="2" step="0.05"></div>
+          <div class="field"><label>Line height <output data-o="lineHeight"></output></label><input type="range" data-k="lineHeight" min="0.7" max="2" step="0.01"></div>
         </div>
         <div class="field">
           <label>Animation</label>
-          <div class="seg" data-k="animation"><button data-v="none">None</button><button data-v="pop">Pop in</button></div>
+          <div class="seg" data-k="animation"><button data-v="none">None</button><button data-v="fade">Fade</button><button data-v="rise">Rise</button><button data-v="pop">Pop</button></div>
         </div>
       </section>
     </aside>

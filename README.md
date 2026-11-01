@@ -21,8 +21,10 @@ interesting hai to
 ## The caption editor
 
 - **Any font.** All 1,900+ Google Fonts plus every font installed on your computer, searchable.
-- **Animated captions.** The spoken word is highlighted in colour or a box, it can grow as it's spoken, words can appear as they're said, and captions pop in. There are presets too: Bold Pop, Hormozi, Clean, Boxed, Karaoke, and Word by word.
-- **Full styling.** Size, weight, colours, outline, shadow, background box, line width and position. You can also drag the caption up or down right on the video.
+- **Cinematic styles.** These presets are for a minimal, expensive look: Editorial, Paradise, Gold accent, Film, Luxe, Whisper, Poster and Tall.
+- **Accent words.** The key word in each caption can be set in a second font, usually a big serif italic or a script, and stacked on its own line. The word is picked automatically, or you can choose it by wrapping it in `*stars*`.
+- **Animated captions.** The spoken word can be highlighted in colour or a box, and it can grow as it's spoken. Words can appear as they're said, and captions can fade, rise or pop in. There are social presets too: Bold Pop, Hormozi, Clean, Boxed, Karaoke and Word by word.
+- **Full styling.** Size, weight, italics, case, letter spacing, colours, outline, shadow or glow, background box, line width and position. You can also drag the caption up or down right on the video.
 - **Timeline.** It shows the audio waveform. Drag captions to move them, drag their edges to retime them, and split (S), merge (M), add (A) or delete them. Undo and redo work with ⌘Z and ⇧⌘Z.
 - **What you see is what you get.** The preview and the export use the same renderer, so the burned-in video matches the editor pixel for pixel, in full resolution with the original audio.
 - **Autosave.** Projects are saved as you work and listed on the home screen.

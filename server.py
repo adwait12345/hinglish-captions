@@ -243,7 +243,7 @@ _fonts = {}
 
 
 def google_fonts():
-    cache = CACHE / "google-fonts.json"
+    cache = CACHE / "google-fonts-v2.json"
     if cache.exists() and time.time() - cache.stat().st_mtime < 7 * 86400:
         return json.loads(cache.read_text())
     try:
@@ -251,7 +251,8 @@ def google_fonts():
         raw = urllib.request.urlopen("https://fonts.google.com/metadata/fonts", timeout=15).read().decode()
         data = json.loads(raw[raw.index("{"):])  # tolerate an anti-JSON-hijacking prefix
         fonts = [{"family": f["family"], "category": f["category"],
-                  "weights": sorted({int(k) for k in f["fonts"] if k.isdigit()})}
+                  "weights": sorted({int(k) for k in f["fonts"] if k.isdigit()}),
+                  "italics": sorted({int(k[:-1]) for k in f["fonts"] if k.endswith("i")})}
                  for f in sorted(data["familyMetadataList"], key=lambda f: f.get("popularity", 9999))]
         cache.write_text(json.dumps(fonts))
         return fonts
@@ -299,7 +300,9 @@ def run_export(pid, manifest, out_dir):
     try:
         p = load_project(pid)
         meta = p["meta"]
+        # Frames cover only the horizontal band captions can reach (offsetY..offsetY+H).
         W, H = manifest["width"], manifest["height"]
+        offset_y = int(manifest.get("offsetY", 0))
         from PIL import Image
         Image.new("RGBA", (W, H), (0, 0, 0, 0)).save(out_dir / "blank.png")
 
@@ -317,11 +320,9 @@ def run_export(pid, manifest, out_dir):
         lines += ["file blank.png", f"duration {tail:.4f}", "file blank.png"]
         (out_dir / "frames.txt").write_text("\n".join(lines) + "\n")
 
-        overlay = "[1:v]format=rgba"
-        if (W, H) != (meta["width"], meta["height"]):
-            overlay += f",scale={meta['width']}:{meta['height']}"
         # shortest=1: stop with the source video (the caption track runs a bit past it)
-        overlay += "[c];[0:v][c]overlay=0:0:eof_action=repeat:shortest=1:format=auto,format=yuv420p[v]"
+        overlay = (f"[1:v]format=rgba[c];[0:v][c]overlay=0:{offset_y}:eof_action=repeat:shortest=1:format=auto,"
+                   "format=yuv420p[v]")
         out = out_dir / "output.mp4"
 
         def ffmpeg(audio_args):
