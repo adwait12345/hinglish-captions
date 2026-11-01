@@ -16,6 +16,8 @@ import numpy as np
 import torch
 from transformers import pipeline
 
+from media import audio_map
+
 MODEL_ID = "Oriserve/Whisper-Hindi2Hinglish-Prime"  # best-quality Hinglish model (6 GB)
 ALIGN_MODEL_ID = "MahmoudAshraf/mms-300m-1130-forced-aligner"  # word timing (1.3 GB)
 DEFAULT_WORDS_PER_CAPTION = 4  # short, punchy reel-style captions
@@ -78,7 +80,7 @@ def load_audio(path):
     os.close(fd)
     try:
         out = subprocess.run(
-            ["ffmpeg", "-nostdin", "-y", "-i", path, "-vn", "-ac", "1", "-ar", "16000",
+            ["ffmpeg", "-nostdin", "-y", "-i", path, *audio_map(path), "-vn", "-ac", "1", "-ar", "16000",
              "-f", "f32le", "-loglevel", "error", tmp],
             capture_output=True,
         )
