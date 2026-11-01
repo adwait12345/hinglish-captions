@@ -27,17 +27,18 @@ function toast(msg, ms = 2600) {
 }
 
 // Upload with a progress callback (fetch can't report upload progress).
-function xhrUpload(url, formData, onProgress) {
+// `body` can be a File (sent as-is, streamed from disk) or FormData.
+function xhrUpload(url, body, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url);
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
     xhr.onload = () => {
-      const body = JSON.parse(xhr.responseText || '{}');
-      xhr.status < 300 ? resolve(body) : reject(new Error(body.detail || `Upload failed (${xhr.status})`));
+      const res = JSON.parse(xhr.responseText || '{}');
+      xhr.status < 300 ? resolve(res) : reject(new Error(res.detail || `Upload failed (${xhr.status})`));
     };
     xhr.onerror = () => reject(new Error('Upload failed'));
-    xhr.send(formData);
+    xhr.send(body);
   });
 }
 
@@ -233,10 +234,9 @@ async function upload(file) {
   const bar = $('.upload-bar', drop);
   bar.hidden = false;
   $('.drop-title', drop).textContent = `Uploading ${file.name}…`;
-  const fd = new FormData();
-  fd.append('video', file);
   try {
-    const p = await xhrUpload('/api/projects', fd, (f) => {
+    // The raw file goes straight to disk on the server, chunk by chunk.
+    const p = await xhrUpload(`/api/projects/upload?name=${encodeURIComponent(file.name)}`, file, (f) => {
       $('div', bar).style.width = `${f * 100}%`;
       if (f >= 1) $('.drop-title', drop).textContent = 'Reading the video…';
     });
@@ -792,8 +792,18 @@ $('#btn-export').onclick = async () => {
     const ctx = canvas.getContext('2d');
     const band = captionBand(ctx, W, H, app.captions, app.style);
     canvas.width = W; canvas.height = band.height;
-    const fd = new FormData();
+    // Draw and send frames in small batches, so only a few images are ever
+    // held in memory at once (long or 4K videos can have thousands).
+    const BATCH = 40;
+    await api.json(`/api/projects/${pid}/export/start`, { method: 'POST' });
     const frames = [];
+    let batch = new FormData(), inBatch = 0;
+    const flush = async () => {
+      if (!inBatch) return;
+      await api.json(`/api/projects/${pid}/export/frames`, { method: 'POST', body: batch });
+      batch = new FormData();
+      inBatch = 0;
+    };
     for (let i = 0; i < states.length; i++) {
       if (!dlg.open) return;
       const s = states[i];
@@ -803,12 +813,17 @@ $('#btn-export').onclick = async () => {
       drawCaption(ctx, W, H, s.cap, s.t, app.style);
       const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'));
       const name = `f${String(i).padStart(6, '0')}.png`;
-      fd.append('frames', blob, name);
+      batch.append('frames', blob, name);
+      inBatch++;
       frames.push({ file: name, start: s.start, end: s.end });
-      if (i % 5 === 0) setP(`Drawing captions… ${i + 1} / ${states.length}`, (i / states.length) * 0.3);
+      if (inBatch >= BATCH) await flush();
+      if (i % 5 === 0) setP(`Drawing captions… ${i + 1} / ${states.length}`, (i / states.length) * 0.4);
     }
-    fd.append('manifest', JSON.stringify({ width: W, height: band.height, offsetY: band.top, frames }));
-    await xhrUpload(`/api/projects/${pid}/export`, fd, (f) => setP('Sending to ffmpeg…', 0.3 + f * 0.1));
+    await flush();
+    await api.json(`/api/projects/${pid}/export/render`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ width: W, height: band.height, offsetY: band.top, frames }),
+    });
     await poll(pid, (s) => setP(s.stage || 'Rendering…', 0.4 + (s.progress || 0) * 0.6));
     setP('Done! Your captioned video is ready.', 1);
     dl.href = `/api/projects/${pid}/download?t=${Date.now()}`;

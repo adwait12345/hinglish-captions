@@ -58,11 +58,20 @@ python3 -m venv .venv
 
 Projects (your uploaded videos, captions and exports) are stored in the `projects/` folder.
 
-**First run downloads about 7.5 GB of models** (6.2 GB transcription + 1.3 GB alignment). They're cached in `~/.cache/huggingface` and only downloaded once.
+**First run downloads about 7.5 GB of models** (6.2 GB transcription + 1.3 GB alignment). They're cached in `~/.cache/huggingface` and only downloaded once. On Apple Silicon, it also saves a 3 GB half-precision copy of the transcription model in `~/.cache/hinglish-captions`, which loads twice as fast with a fraction of the memory.
 
 ## Speed
 
 On an Apple M4 with 16 GB RAM, captioning a 30-second clip takes about 30–35 seconds, and burning captions into a 14-second 1080×1920 reel takes about 10 seconds. It uses the Apple GPU (MPS) automatically and falls back to CPU elsewhere, which is much slower.
+
+## Memory
+
+The tool is built to stay light on a 16 GB Mac:
+
+- **Uploads** stream straight to disk, so a 1 GB 4K file uses about 50 MB of memory.
+- **Audio** is decoded to a temporary file and read in pieces, not held in RAM.
+- **Models** load one at a time and are freed as soon as captioning finishes. Peak use is about 3.7 GB while transcribing, and about 0.3 GB when idle.
+- **Export** sends caption frames to the server in batches of 40, so even thousands of frames never pile up in memory.
 
 ## Tips
 

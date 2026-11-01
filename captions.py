@@ -6,7 +6,10 @@ Runs fully offline using Oriserve's Whisper model fine-tuned for Hinglish
 pin every word to the exact moment it is spoken.
 """
 
+import gc
+import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -19,30 +22,73 @@ DEFAULT_WORDS_PER_CAPTION = 4  # short, punchy reel-style captions
 MAX_CHARS_PER_CAPTION = 30  # never wider than one short line on a phone
 
 DEVICE = "mps" if torch.backends.mps.is_available() else "cpu"
+CACHE = Path.home() / ".cache" / "hinglish-captions"
+CACHE.mkdir(parents=True, exist_ok=True)
 _pipes = {}
+
+
+def _half_precision_copy(model_id):
+    """The Hinglish model ships at full precision (6 GB) and would be read whole
+    into RAM before being shrunk for the GPU, briefly using ~4 GB. Save a
+    half-precision copy once (3 GB) and load that instead: ~0.4 GB peak RAM."""
+    from transformers import WhisperForConditionalGeneration
+
+    path = CACHE / (model_id.replace("/", "--") + "-fp16")
+    if not (path / "config.json").exists():
+        model = WhisperForConditionalGeneration.from_pretrained(model_id, dtype=torch.float16, low_cpu_mem_usage=True)
+        model.save_pretrained(path)
+        del model
+        gc.collect()
+    return path
 
 
 def get_pipe(model_id):
     if model_id not in _pipes:
-        _pipes[model_id] = pipeline(
-            "automatic-speech-recognition",
-            model=model_id,
-            device=DEVICE,
-            dtype=torch.float16 if DEVICE == "mps" else torch.float32,
-        )
+        if DEVICE == "mps":
+            from transformers import AutoProcessor, WhisperForConditionalGeneration
+
+            proc = AutoProcessor.from_pretrained(model_id)
+            model = WhisperForConditionalGeneration.from_pretrained(
+                _half_precision_copy(model_id), dtype=torch.float16, low_cpu_mem_usage=True)
+            _pipes[model_id] = pipeline("automatic-speech-recognition", model=model, tokenizer=proc.tokenizer,
+                                        feature_extractor=proc.feature_extractor, device=DEVICE, dtype=torch.float16)
+        else:
+            _pipes[model_id] = pipeline("automatic-speech-recognition", model=model_id, device=DEVICE)
     return _pipes[model_id]
 
 
+def release_models(which=("whisper", "aligner")):
+    """Give the models' memory back (GPU memory is shared with RAM on Macs)."""
+    if "whisper" in which:
+        _pipes.clear()
+    if "aligner" in which:
+        _aligner.clear()
+    gc.collect()
+    if DEVICE == "mps":
+        torch.mps.empty_cache()
+
+
 def load_audio(path):
-    """Pull the audio track out of any video/audio file as 16 kHz mono floats."""
-    out = subprocess.run(
-        ["ffmpeg", "-nostdin", "-i", path, "-vn", "-ac", "1", "-ar", "16000",
-         "-f", "f32le", "-loglevel", "error", "-"],
-        capture_output=True,
-    )
-    if out.returncode != 0:
-        raise ValueError("Couldn't read audio from that file: " + out.stderr.decode()[-300:])
-    return np.frombuffer(out.stdout, np.float32)
+    """Pull the audio track out of any video/audio file as 16 kHz mono floats.
+
+    Decoded to a temporary file and memory-mapped, so even an hour of audio
+    (~230 MB) is read from disk in pieces as needed instead of sitting in RAM.
+    """
+    fd, tmp = tempfile.mkstemp(suffix=".f32", dir=CACHE)
+    os.close(fd)
+    try:
+        out = subprocess.run(
+            ["ffmpeg", "-nostdin", "-y", "-i", path, "-vn", "-ac", "1", "-ar", "16000",
+             "-f", "f32le", "-loglevel", "error", tmp],
+            capture_output=True,
+        )
+        if out.returncode != 0:
+            raise ValueError("Couldn't read audio from that file: " + out.stderr.decode()[-300:])
+        if os.path.getsize(tmp) == 0:
+            return np.zeros(0, np.float32)
+        return np.memmap(tmp, dtype=np.float32, mode="r")
+    finally:
+        os.unlink(tmp)  # the mapping keeps the data reachable; the file vanishes when it's released
 
 
 def speech_regions(audio, sr=16000, frame=0.02, min_gap=0.3, max_len=20.0):
@@ -55,7 +101,12 @@ def speech_regions(audio, sr=16000, frame=0.02, min_gap=0.3, max_len=20.0):
     n = len(audio) // hop
     if n == 0:
         return []
-    rms = np.sqrt(np.mean(audio[: n * hop].reshape(n, hop) ** 2, axis=1) + 1e-12)
+    # Loudness per 20 ms frame, a minute at a time so long videos don't need big temporaries.
+    rms = np.empty(n)
+    step = 3000  # frames per chunk (60 s)
+    for i in range(0, n, step):
+        block = np.asarray(audio[i * hop: min(n, i + step) * hop], dtype=np.float32).reshape(-1, hop)
+        rms[i: i + len(block)] = np.sqrt(np.mean(block.astype(np.float64) ** 2, axis=1) + 1e-12)
     db = 20 * np.log10(rms)
     loud = db > max(np.percentile(db, 95) - 30, -55)
 
@@ -101,15 +152,15 @@ def transcribe(audio, model_id=MODEL_ID):
     regions = speech_regions(audio, sr)
     if not regions:
         return []
-    results = get_pipe(model_id)(
-        [{"raw": audio[int(s * sr): int(e * sr)], "sampling_rate": sr} for s, e in regions],
-        generate_kwargs={"task": "transcribe", "num_beams": 1},  # greedy: same text in our tests, ~2x faster
-    )
-    return [
-        (s, e, r["text"].strip())
-        for (s, e), r in zip(regions, results)
-        if r["text"].strip()
-    ]
+    pipe = get_pipe(model_id)
+    out = []
+    for s, e in regions:  # one spoken stretch at a time: only ~20 s of audio in memory
+        clip = np.array(audio[int(s * sr): int(e * sr)], dtype=np.float32)
+        text = pipe({"raw": clip, "sampling_rate": sr},
+                    generate_kwargs={"task": "transcribe", "num_beams": 1})["text"].strip()  # greedy: same text, ~2x faster
+        if text:
+            out.append((s, e, text))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +180,7 @@ def get_aligner():
     if not _aligner:
         from transformers import AutoProcessor, Wav2Vec2ForCTC
         _aligner["proc"] = AutoProcessor.from_pretrained(ALIGN_MODEL_ID)
-        _aligner["model"] = Wav2Vec2ForCTC.from_pretrained(ALIGN_MODEL_ID).to(DEVICE).eval()
+        _aligner["model"] = Wav2Vec2ForCTC.from_pretrained(ALIGN_MODEL_ID, low_cpu_mem_usage=True).to(DEVICE).eval()
         _aligner["vocab"] = _aligner["proc"].tokenizer.get_vocab()
     return _aligner
 
@@ -177,7 +228,7 @@ def align_words(audio, segments, sr=16000):
     words_out = []
     for seg_start, seg_end, text in segments:
         words = text.split()
-        chunk = audio[int(seg_start * sr): int(seg_end * sr)]
+        chunk = np.array(audio[int(seg_start * sr): int(seg_end * sr)], dtype=np.float32)
         # Letters the aligner knows, per word (numbers/symbols have none).
         letters = [[a["vocab"][c] for c in w.lower() if c in a["vocab"] and c.isalpha() or c == "'"]
                    for w in words]

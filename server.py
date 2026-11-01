@@ -24,6 +24,7 @@ import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 ROOT = Path(__file__).parent
 PROJECTS = ROOT / "projects"
@@ -96,17 +97,24 @@ def probe(path):
 
 
 def compute_peaks(path):
-    out = subprocess.run(
+    """Loudest sample per 10 ms, read from ffmpeg in 64 KB blocks (constant memory)."""
+    hop = 8000 // PEAKS_PER_SEC
+    proc = subprocess.Popen(
         ["ffmpeg", "-nostdin", "-loglevel", "error", "-i", str(path), "-vn", "-ac", "1",
          "-ar", "8000", "-f", "f32le", "-"],
-        capture_output=True,
+        stdout=subprocess.PIPE,
     )
-    a = np.abs(np.frombuffer(out.stdout, np.float32))
-    hop = 8000 // PEAKS_PER_SEC
-    n = len(a) // hop
-    if n == 0:
+    peaks, leftover = [], np.zeros(0, np.float32)
+    while block := proc.stdout.read(hop * 4 * 200):
+        a = np.concatenate([leftover, np.frombuffer(block, np.float32)])
+        n = len(a) // hop
+        if n:
+            peaks.append(np.abs(a[: n * hop]).reshape(n, hop).max(axis=1))
+        leftover = a[n * hop:]
+    proc.wait()
+    if not peaks:
         return []
-    peaks = a[: n * hop].reshape(n, hop).max(axis=1)
+    peaks = np.concatenate(peaks)
     peaks = peaks / (np.percentile(peaks, 99.5) or 1)
     return np.round(np.clip(peaks, 0, 1), 3).tolist()
 
@@ -123,25 +131,50 @@ def list_projects():
     return sorted(items, key=lambda p: -p["created"])
 
 
-@app.post("/api/projects")
-def create_project(video: UploadFile = File(...)):
-    pid = uuid.uuid4().hex[:12]
-    d = PROJECTS / pid
-    d.mkdir()
-    ext = (Path(video.filename or "video.mp4").suffix or ".mp4").lower()
-    src = d / f"source{ext}"
-    with src.open("wb") as f:
-        shutil.copyfileobj(video.file, f, 1024 * 1024)
+def finish_project(d, src, name):
     try:
         meta = probe(src)
     except HTTPException:
         shutil.rmtree(d)
         raise
     (d / "peaks.json").write_text(json.dumps(compute_peaks(src)))
-    p = {"id": pid, "name": Path(video.filename or "video").stem, "created": time.time(),
+    p = {"id": d.name, "name": name, "created": time.time(),
          "meta": meta, "words": None, "captions": None, "style": None}
     save_project(p)
     return p
+
+
+def new_project_dir(filename):
+    d = PROJECTS / uuid.uuid4().hex[:12]
+    d.mkdir()
+    ext = (Path(filename or "video.mp4").suffix or ".mp4").lower()
+    if not re.fullmatch(r"\.[a-z0-9]{1,5}", ext):
+        ext = ".mp4"
+    return d, d / f"source{ext}"
+
+
+@app.post("/api/projects/upload")
+async def upload_project(request: Request, name: str = "video.mp4"):
+    """The editor sends the raw file as the request body; it goes straight to
+    disk in chunks as it arrives, so a 4K video never sits in memory."""
+    d, src = new_project_dir(name)
+    try:
+        with src.open("wb") as f:
+            async for chunk in request.stream():
+                f.write(chunk)
+    except Exception:
+        shutil.rmtree(d, ignore_errors=True)
+        raise
+    return await run_in_threadpool(finish_project, d, src, Path(name).stem or "video")
+
+
+@app.post("/api/projects")
+def create_project(video: UploadFile = File(...)):
+    """Form upload (for scripts/curl). Starlette spools it to disk first."""
+    d, src = new_project_dir(video.filename)
+    with src.open("wb") as f:
+        shutil.copyfileobj(video.file, f, 1024 * 1024)
+    return finish_project(d, src, Path(video.filename or "video").stem)
 
 
 @app.get("/api/projects/{pid}")
@@ -197,8 +230,11 @@ def run_transcribe(pid, max_words):
             audio = cap.load_audio(str(source_file(pid)))
             job.update(stage="Listening (first run loads the model)…", progress=0.15)
             segments = cap.transcribe(audio)
+            cap.release_models(["whisper"])  # ~3 GB back before the aligner loads
             job.update(stage="Lining up every word with the audio…", progress=0.75)
             words = cap.align_words(audio, segments)
+            cap.release_models(["aligner"])
+            del audio
         p = load_project(pid)
         p["words"] = [[round(s, 3), round(e, 3), w] for s, e, w in words]
         p["captions"] = to_caption_json(cap.caption_groups(words, max_words))
@@ -206,6 +242,7 @@ def run_transcribe(pid, max_words):
         job.update(state="done", stage="Done", progress=1.0)
     except Exception as e:  # report any failure to the page instead of hanging
         job.update(state="error", error=str(e))
+        cap.release_models()
 
 
 @app.post("/api/projects/{pid}/transcribe")
@@ -354,21 +391,44 @@ def run_export(pid, manifest, out_dir):
         job.update(state="error", error=str(e))
 
 
-@app.post("/api/projects/{pid}/export")
-async def start_export(pid: str, request: Request):
+# Export happens in three steps so frames reach the disk in small batches and
+# never pile up in memory (in the browser or here): start → frames… → render.
+
+@app.post("/api/projects/{pid}/export/start")
+def export_start(pid: str):
     d = pdir(pid)
     if jobs.get(pid, {}).get("state") == "running":
         raise HTTPException(409, "Something is already running for this project.")
-    form = await request.form(max_files=100_000, max_fields=1000)
-    manifest = json.loads(form["manifest"])
     out_dir = d / "export"
     shutil.rmtree(out_dir, ignore_errors=True)
     out_dir.mkdir()
+    return {"ok": True}
+
+
+@app.post("/api/projects/{pid}/export/frames")
+async def export_frames(pid: str, request: Request):
+    out_dir = pdir(pid) / "export"
+    if not out_dir.exists():
+        raise HTTPException(409, "Start the export first.")
+    form = await request.form(max_files=500)
+    saved = 0
     for key, value in form.multi_items():
         if key == "frames" and hasattr(value, "filename"):
             name = Path(value.filename).name
             if re.fullmatch(r"f\d+\.png", name):
                 (out_dir / name).write_bytes(await value.read())
+                saved += 1
+    await form.close()
+    return {"saved": saved}
+
+
+@app.post("/api/projects/{pid}/export/render")
+async def export_render(pid: str, request: Request):
+    out_dir = pdir(pid) / "export"
+    manifest = await request.json()
+    missing = [f["file"] for f in manifest["frames"] if not (out_dir / Path(f["file"]).name).exists()]
+    if missing:
+        raise HTTPException(400, f"{len(missing)} caption frames never arrived; please export again.")
     jobs[pid] = {"kind": "export", "state": "running", "stage": "Preparing…", "progress": 0}
     threading.Thread(target=run_export, args=(pid, manifest, out_dir), daemon=True).start()
     return jobs[pid]
