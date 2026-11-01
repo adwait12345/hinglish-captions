@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hinglish Captions</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%237c5cff'/><rect x='6' y='19' width='20' height='5' rx='2' fill='white'/><rect x='9' y='11' width='14' height='5' rx='2' fill='%23ffe600'/></svg>">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=7">
 </head>
 <body>
   <!-- Home: upload + recent projects -->
@@ -43,6 +43,7 @@
       <nav class="tabs" role="tablist">
         <button class="tab active" data-tab="captions">Captions</button>
         <button class="tab" data-tab="style">Style</button>
+        <button class="tab" data-tab="saved">My styles</button>
         <button class="tab" data-tab="words">Spelling</button>
       </nav>
 
@@ -68,11 +69,7 @@
       </section>
 
       <section class="tab-body" data-tab="style" hidden>
-        <div class="field">
-          <label>My styles <button id="btn-save-style" class="link">+ Save current style</button></label>
-          <div class="presets" id="my-styles"></div>
-          <p class="hint" id="my-styles-empty">Save your look once and reuse it on every video. ★ makes a style the default for new videos.</p>
-        </div>
+        <button id="goto-saved" class="save-banner">★ Like this look? <b>Save it to My styles</b></button>
         <div class="field">
           <label>Cinematic</label>
           <div class="presets" data-group="cinematic"></div>
@@ -176,6 +173,18 @@
           <div class="seg" data-k="animation"><button data-v="none">None</button><button data-v="fade">Fade</button><button data-v="rise">Rise</button><button data-v="pop">Pop</button></div>
         </div>
       </section>
+      <section class="tab-body" data-tab="saved" hidden>
+        <h4 class="first">Save the current look</h4>
+        <form id="save-style-form" class="save-style">
+          <input id="save-style-name" placeholder="Name it, e.g. My reels" required spellcheck="false" maxlength="40">
+          <button class="primary small">Save</button>
+        </form>
+        <p class="hint">Saves everything from the Style tab: fonts, colours, accent words, position and animation.</p>
+        <h4>Your styles</h4>
+        <div class="saved-list" id="my-styles"></div>
+        <p class="hint" id="my-styles-empty">Nothing saved yet. Style a video the way you like, then save it here to reuse it with one click.</p>
+        <p class="hint" id="my-styles-help" hidden>Click a style to apply it. ★ = used automatically for every new video.</p>
+      </section>
       <section class="tab-body" data-tab="words" hidden>
         <h4 class="first">Hinglish spelling</h4>
         <label class="check"><input type="checkbox" id="dict-texting"> Texting-style spelling</label>
@@ -244,7 +253,16 @@
     </div>
   </dialog>
 
+  <!-- In-page confirm (browser pop-ups are blocked in some windows) -->
+  <dialog id="ask-dlg" class="dlg">
+    <p id="ask-msg"></p>
+    <div class="dlg-actions">
+      <button id="ask-no" class="ghost">Cancel</button>
+      <button id="ask-yes" class="primary">OK</button>
+    </div>
+  </dialog>
+
   <div id="toast" class="toast" hidden></div>
-  <script type="module" src="js/main.js"></script>
+  <script type="module" src="js/main.js?v=7"></script>
 </body>
 </html>

@@ -1,6 +1,6 @@
-import { DEFAULT_STYLE, PRESETS, captionAt, captionBand, captionBox, drawCaption, exportStates, normalizeStyle, presetStyle } from './render.js';
-import { fontInfo, getFonts, loadFont, nearestWeight } from './fonts.js';
-import { Timeline, fmtTime } from './timeline.js';
+import { DEFAULT_STYLE, PRESETS, captionAt, captionBand, captionBox, drawCaption, exportStates, normalizeStyle, presetStyle } from './render.js?v=7';
+import { fontInfo, getFonts, loadFont, nearestWeight } from './fonts.js?v=7';
+import { Timeline, fmtTime } from './timeline.js?v=7';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -31,6 +31,21 @@ function toast(msg, ms = 2600, action = null) {
   t.hidden = false;
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => (t.hidden = true), ms);
+}
+
+// In-page yes/no question. (Browser pop-ups like confirm()/prompt() are
+// silently blocked in some windows, which made buttons look dead.)
+function ask(message, yes = 'OK') {
+  const dlg = $('#ask-dlg');
+  $('#ask-msg').textContent = message;
+  $('#ask-yes').textContent = yes;
+  dlg.showModal();
+  return new Promise((resolve) => {
+    const done = (v) => { dlg.close(); $('#ask-yes').onclick = $('#ask-no').onclick = dlg.oncancel = null; resolve(v); };
+    $('#ask-yes').onclick = () => done(true);
+    $('#ask-no').onclick = () => done(false);
+    dlg.oncancel = () => done(false);
+  });
 }
 
 // Upload with a progress callback (fetch can't report upload progress).
@@ -195,7 +210,7 @@ async function showHome() {
       location.hash = `#/p/${p.id}`;
     };
     $('button', li).onclick = async () => {
-      if (!confirm(`Delete "${p.name}"? This removes the uploaded video and its captions.`)) return;
+      if (!await ask(`Delete "${p.name}"?\nThis removes the uploaded video and its captions.`, 'Delete')) return;
       await api.json(`/api/projects/${p.id}`, { method: 'DELETE' });
       showHome();
     };
@@ -320,7 +335,7 @@ async function trackTranscription(pid) {
 }
 
 $('#btn-retranscribe').addEventListener('click', async () => {
-  if (!confirm('Listen to the video again and replace all captions? Your current captions stay available with Undo (⌘Z).')) return;
+  if (!await ask('Listen to the video again and replace all captions?\nYour current captions stay available with Undo (⌘Z).', 'Re-transcribe')) return;
   const pid = app.project.id;
   try {
     await api.form(`/api/projects/${pid}/transcribe`, { max_words: $('#mw2').value });
@@ -641,6 +656,7 @@ function setStyle(patch, commit = true) {
   Object.assign(app.style, patch);
   syncStyleControls();
   requestDraw();
+  if (commit) renderMyStyles();
   if (commit) app.commit();
 }
 
@@ -870,52 +886,73 @@ function defaultStyle() {
   return lib?.styles.find((x) => x.name === lib.defaultStyle)?.style || null;
 }
 
-function renderMyStyles() {
+const sameStyle = (a, b) => JSON.stringify(normalizeStyle(a)) === JSON.stringify(normalizeStyle(b));
+
+function renderMyStyles(flashName = null) {
   const wrap = $('#my-styles');
   const lib = app.library;
   $('#my-styles-empty').hidden = lib.styles.length > 0;
+  $('#my-styles-help').hidden = lib.styles.length === 0;
+  $('.tab[data-tab="saved"]').textContent = lib.styles.length ? `My styles (${lib.styles.length})` : 'My styles';
   wrap.replaceChildren(...lib.styles.map((entry) => {
-    const tile = document.createElement('div');
-    tile.className = 'preset mine' + (entry.name === lib.defaultStyle ? ' is-default' : '');
-    tile.title = entry.name;
-    tile.innerHTML = '<canvas width="240" height="128"></canvas><span></span><div class="tile-actions"><button class="star" title="Use for new videos">★</button><button class="del" title="Delete style">×</button></div>';
-    $('span', tile).textContent = entry.name + (entry.name === lib.defaultStyle ? ' · default' : '');
-    $('.star', tile).classList.toggle('on', entry.name === lib.defaultStyle);
-    tile.onclick = async (e) => {
-      if (e.target.closest('.tile-actions')) return;
-      const style = normalizeStyle({ ...entry.style, positionY: entry.style.positionY ?? app.style.positionY });
+    const isDefault = entry.name === lib.defaultStyle;
+    const item = document.createElement('div');
+    item.className = 'saved-item' + (sameStyle(entry.style, app.style) ? ' applied' : '');
+    item.innerHTML = `<canvas width="208" height="112"></canvas>
+      <div class="info"><div class="name"></div><div class="meta"></div></div>
+      <div class="acts"><button class="star" title="Use for every new video">★</button><button class="del" title="Delete">×</button></div>`;
+    $('.name', item).textContent = entry.name;
+    const st = normalizeStyle(entry.style);
+    $('.meta', item).innerHTML = '';
+    $('.meta', item).append(isDefault ? Object.assign(document.createElement('span'), { className: 'badge', textContent: 'DEFAULT · ' }) : '',
+      `${st.fontFamily}${st.emphasis !== 'off' ? ` + ${st.emFontFamily}` : ''}`);
+    $('.star', item).classList.toggle('on', isDefault);
+    item.onclick = async (e) => {
+      if (e.target.closest('.acts')) return;
+      const style = normalizeStyle(entry.style);
       await loadFont(style);
       setStyle(style);
-    };
-    $('.star', tile).onclick = async () => {
-      await saveLibrary({ defaultStyle: lib.defaultStyle === entry.name ? null : entry.name });
       renderMyStyles();
-      toast(app.library.defaultStyle ? `New videos will start in “${entry.name}”.` : 'No default style.');
+      toast(`Applied “${entry.name}”.`);
     };
-    $('.del', tile).onclick = async () => {
-      if (!confirm(`Delete the style “${entry.name}”?`)) return;
-      await saveLibrary({
-        styles: lib.styles.filter((x) => x !== entry),
-        defaultStyle: lib.defaultStyle === entry.name ? null : lib.defaultStyle,
-      });
+    $('.star', item).onclick = async () => {
+      await saveLibrary({ defaultStyle: isDefault ? null : entry.name });
+      renderMyStyles();
+      toast(isDefault ? 'No default style now.' : `Every new video will start in “${entry.name}”.`);
+    };
+    $('.del', item).onclick = async () => {
+      if (!await ask(`Delete the style “${entry.name}”?`, 'Delete')) return;
+      await saveLibrary({ styles: lib.styles.filter((x) => x !== entry), defaultStyle: isDefault ? null : lib.defaultStyle });
       renderMyStyles();
     };
-    const style = normalizeStyle(entry.style);
-    loadFont(style).then(() => drawPreset($('canvas', tile), style.emphasis !== 'off' ? 'my *style* here' : `${entry.name} Aa`, style));
-    return tile;
+    loadFont(st).then(() => drawPreset($('canvas', item), st.emphasis !== 'off' ? 'my *style*' : 'Aa caption', st));
+    if (entry.name === flashName) requestAnimationFrame(() => item.animate(
+      [{ boxShadow: '0 0 0 3px #7c5cff' }, { boxShadow: '0 0 0 0 transparent' }], { duration: 1400 }));
+    return item;
   }));
 }
 
-$('#btn-save-style').addEventListener('click', async () => {
-  const name = prompt('Name this style', `My style ${app.library.styles.length + 1}`)?.trim();
+$('#goto-saved').addEventListener('click', () => {
+  switchTab('saved');
+  $('#save-style-name').focus();
+});
+
+$('#save-style-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = $('#save-style-name').value.trim();
   if (!name) return;
-  const existing = app.library.styles.find((x) => x.name === name);
-  if (existing && !confirm(`Replace your saved style “${name}”?`)) return;
-  const entry = { name, style: { ...app.style } };
+  const existing = app.library.styles.find((x) => x.name.toLowerCase() === name.toLowerCase());
+  if (existing && !await ask(`You already have a style called “${existing.name}”. Replace it with the current look?`, 'Replace')) return;
+  const entry = { name: existing?.name || name, style: { ...app.style } };
   const styles = existing ? app.library.styles.map((x) => (x === existing ? entry : x)) : [...app.library.styles, entry];
-  await saveLibrary({ styles });
-  renderMyStyles();
-  toast(`Saved “${name}”. Click ★ on it to use it for every new video.`, 4000);
+  try {
+    await saveLibrary({ styles });
+  } catch (err) {
+    return toast(`Couldn’t save: ${err.message}`, 5000);
+  }
+  $('#save-style-name').value = '';
+  renderMyStyles(entry.name);
+  toast(`Saved “${entry.name}”. Tap ★ to use it for every new video.`, 4000);
 });
 
 // Tabs

@@ -493,6 +493,16 @@ def download(pid: str):
     return FileResponse(out, media_type="video/mp4", filename=f"{name}-captioned.mp4")
 
 
+@app.middleware("http")
+async def revalidate_app_files(request: Request, call_next):
+    """Make the browser check for a newer copy of the editor's own files on every
+    load (cheap: unchanged files answer 304), so updates show up after a refresh."""
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")
 
 if __name__ == "__main__":
