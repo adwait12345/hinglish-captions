@@ -219,3 +219,27 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
   .editor { grid-template-columns: 1fr; grid-template-rows: 52px 45vh 1fr 220px; grid-template-areas: "top" "stage" "panel" "tl"; height: auto; min-height: 100vh; }
   .project-name { width: 140px; }
 }
+
+/* My styles + spelling dictionary */
+.link { color: var(--accent-2); font-size: 12px; font-weight: 600; padding: 0; }
+.link:hover { text-decoration: underline; }
+.preset.mine { cursor: pointer; }
+.preset .tile-actions { position: absolute; top: 4px; right: 4px; display: flex; gap: 3px; opacity: 0; transition: opacity .12s; }
+.preset.mine:hover .tile-actions, .preset.mine.is-default .tile-actions { opacity: 1; }
+.tile-actions button { width: 22px; height: 22px; border-radius: 6px; background: #000a; color: #fff; font-size: 12px; line-height: 22px; }
+.tile-actions .star.on { color: #ffd84d; }
+.tile-actions button:hover { background: #000d; }
+.tab-body h4.first { margin-top: 2px; }
+.dict-add { display: grid; grid-template-columns: 1fr auto 1fr auto; gap: 6px; align-items: center; margin-bottom: 10px; }
+.dict-add input { height: 32px; min-width: 0; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); padding: 0 8px; outline: none; }
+.dict-add input:focus { border-color: var(--accent); }
+.dict-add span { color: var(--muted); }
+.dict-list { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 4px; }
+.dict-list li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; background: var(--panel-2); font-size: 13px; }
+.dict-list li .arrow { color: var(--muted); }
+.dict-list li .to { font-weight: 600; flex: 1; }
+.dict-list li button { color: var(--muted); width: 22px; height: 22px; border-radius: 5px; }
+.dict-list li button:hover { color: var(--danger); background: #ff5c7a1a; }
+.dict-list.builtin { max-height: 220px; overflow-y: auto; }
+.dict-list.builtin li { background: transparent; padding: 2px 8px; font-size: 12.5px; }
+.toast button { margin-left: 12px; }

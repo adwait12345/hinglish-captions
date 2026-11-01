@@ -28,6 +28,9 @@ interesting hai to
 - **Timeline.** It shows the audio waveform. Drag captions to move them, drag their edges to retime them, and split (S), merge (M), add (A) or delete them. Undo and redo work with ⌘Z and ⇧⌘Z.
 - **What you see is what you get.** The preview and the export use the same renderer, so the burned-in video matches the editor pixel for pixel, in full resolution with the original audio.
 - **Autosave.** Projects are saved as you work and listed on the home screen.
+- **Spelling that matches how you type.** Texting-style Hinglish is on by default, so the model's formal spellings become what people actually write: *vah → woh, tumhen → tumhe, kuchh → kuch, uske lie → uske liye, karoonga → karunga*.
+- **Your own dictionary.** Add words or phrases to always fix (*kiloertz → kHz*, *mac book → MacBook*). New videos use it automatically, and **Apply to this video** fixes existing captions (undo-able). When you correct a word in the Captions tab, it offers to always fix it that way.
+- **My styles.** Save your look and reuse it with one click. Star one, and every new video starts in it.
 
 ## How it works
 
@@ -56,7 +59,7 @@ python3 -m venv .venv
 .venv/bin/python app.py my_video.mp4 2        # ...with 2 words per caption
 ```
 
-Projects (your uploaded videos, captions and exports) are stored in the `projects/` folder.
+Projects (your uploaded videos, captions and exports) are stored in the `projects/` folder. Your dictionary and saved styles are in `library/library.json`.
 
 **First run downloads about 7.5 GB of models** (6.2 GB transcription + 1.3 GB alignment). They're cached in `~/.cache/huggingface` and only downloaded once. On Apple Silicon, it also saves a 3 GB half-precision copy of the transcription model in `~/.cache/hinglish-captions`, which loads twice as fast with a fraction of the memory.
 

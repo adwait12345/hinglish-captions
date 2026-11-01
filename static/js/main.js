@@ -18,9 +18,16 @@ const api = {
   },
 };
 
-function toast(msg, ms = 2600) {
+function toast(msg, ms = 2600, action = null) {
   const t = $('#toast');
   t.textContent = msg;
+  if (action) {
+    const b = document.createElement('button');
+    b.className = 'primary small';
+    b.textContent = action.label;
+    b.onclick = () => { t.hidden = true; action.run(); };
+    t.appendChild(b);
+  }
   t.hidden = false;
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => (t.hidden = true), ms);
@@ -162,6 +169,7 @@ function scheduleSave() {
 // ---------------------------------------------------------------------------
 
 async function route() {
+  app.library ??= await api.json('/api/library').catch(() => ({ texting: true, rules: [], styles: [], defaultStyle: null, builtin: [] }));
   const m = location.hash.match(/^#\/p\/([a-f0-9]{12})$/);
   if (m) {
     try { return await openProject(m[1]); } catch (e) { toast(e.message); location.hash = ''; }
@@ -199,7 +207,7 @@ async function openProject(pid) {
   const p = await api.json(`/api/projects/${pid}`);
   app.project = p;
   app.captions = withIds(p.captions || []);
-  app.style = normalizeStyle(p.style || {});
+  app.style = normalizeStyle(p.style || defaultStyle() || {});
   app.selectedId = null;
   app.history = [JSON.stringify({ captions: plain(app.captions), style: app.style })];
   app.hpos = 0;
@@ -212,6 +220,8 @@ async function openProject(pid) {
   fitStage();
   syncStyleControls();
   renderPresets();
+  renderMyStyles();
+  renderDictionary();
   loadFont(app.style).then(requestDraw);
   const { peaks, perSecond } = await api.json(`/api/projects/${pid}/peaks`);
   timeline.setPeaks(peaks, perSecond);
@@ -366,13 +376,17 @@ function renderList() {
     $('.ts', li).onclick = () => { app.select(cap.id, false); app.seek(cap.start + 0.001); timeline.scrollToTime(cap.start); };
     const ta = $('textarea', li);
     ta.value = captionText(cap);
-    ta.addEventListener('focus', () => { app.select(cap.id, false); if (!app.playing) app.seek(cap.start + 0.001); timeline.scrollToTime(cap.start); });
+    ta.addEventListener('focus', () => { ta.dataset.before = JSON.stringify(cap.words.map((w) => w.text)); app.select(cap.id, false); if (!app.playing) app.seek(cap.start + 0.001); timeline.scrollToTime(cap.start); });
     ta.addEventListener('input', () => {
       setCaptionText(cap, ta.value);
       $(`.tl-cap[data-id="${cap.id}"] .tl-text`).textContent = plainText(cap);
       requestDraw();
     });
-    ta.addEventListener('change', () => { ta.value = captionText(cap); app.onCaptionsChanged(true, true); });
+    ta.addEventListener('change', () => {
+      ta.value = captionText(cap);
+      app.onCaptionsChanged(true, true);
+      offerToLearn(JSON.parse(ta.dataset.before || '[]'), cap.words.map((w) => w.text));
+    });
     ta.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); ta.blur(); } });
     return li;
   }));
@@ -758,6 +772,151 @@ async function chooseFont(f) {
   await loadFont({ ...app.style, ...next });
   setStyle(next);
 }
+
+// ---------------------------------------------------------------------------
+// Library: spelling dictionary + my saved styles (shared by all projects)
+// ---------------------------------------------------------------------------
+
+async function saveLibrary(patch) {
+  Object.assign(app.library, patch);
+  await api.json('/api/library', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+}
+
+const core = (t) => t.replace(/^[^\p{L}\p{N}']+|[^\p{L}\p{N}']+$/gu, '');
+
+function renderDictionary() {
+  const lib = app.library;
+  $('#dict-texting').checked = lib.texting;
+  $('#dict-list').replaceChildren(...lib.rules.map((r, i) => {
+    const li = document.createElement('li');
+    li.innerHTML = '<span class="from"></span><span class="arrow">→</span><span class="to"></span><button title="Remove">×</button>';
+    $('.from', li).textContent = r.from;
+    $('.to', li).textContent = r.to;
+    $('button', li).onclick = async () => {
+      await saveLibrary({ rules: lib.rules.filter((_, j) => j !== i) });
+      renderDictionary();
+    };
+    return li;
+  }));
+  $('#dict-builtin').replaceChildren(...(lib.builtin || []).map((r) => {
+    const li = document.createElement('li');
+    li.textContent = `${r.from} → ${r.to}`;
+    return li;
+  }));
+}
+
+async function addRule(from, to) {
+  from = from.trim(); to = to.trim();
+  if (!from || !to || from.toLowerCase() === to.toLowerCase() && from === to) return;
+  const rules = app.library.rules.filter((r) => r.from.toLowerCase() !== from.toLowerCase());
+  await saveLibrary({ rules: [...rules, { from, to }] });
+  renderDictionary();
+}
+
+$('#dict-texting').addEventListener('change', (e) => saveLibrary({ texting: e.target.checked }));
+$('#dict-show-builtin').addEventListener('click', (e) => {
+  e.preventDefault();
+  const list = $('#dict-builtin');
+  list.hidden = !list.hidden;
+  e.target.textContent = list.hidden ? 'See all' : 'Hide';
+});
+$('#dict-add').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  await addRule($('#dict-from').value, $('#dict-to').value);
+  $('#dict-from').value = $('#dict-to').value = '';
+  $('#dict-from').focus();
+});
+$('#dict-apply').addEventListener('click', async () => {
+  if (!app.captions.length) return toast('Generate captions first.');
+  const fixed = await api.json('/api/fix-spelling', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ captions: plain(app.captions) }),
+  });
+  let changed = 0;
+  fixed.forEach((c, i) => {
+    const cap = app.captions[i];
+    changed += c.words.filter((w, j) => w.text !== cap.words[j]?.text).length + Math.abs(c.words.length - cap.words.length);
+    cap.words = c.words;
+  });
+  app.onCaptionsChanged(true, true);
+  toast(changed ? `Fixed ${changed} word${changed > 1 ? 's' : ''}. Undo with ⌘Z.` : 'Nothing to fix. Spelling already matches your dictionary.');
+});
+
+// After you correct words in a caption, offer to always fix them that way.
+function offerToLearn(before, after) {
+  if (before.length !== after.length) return;
+  const known = new Set(app.library.rules.map((r) => r.from.toLowerCase()));
+  const pairs = before.map((b, i) => [core(b), core(after[i])])
+    .filter(([b, a]) => b && a && b !== a && b.toLowerCase() !== a.toLowerCase() || (b !== a && /[A-Z]/.test(a.slice(1))))
+    .filter(([b]) => !known.has(b.toLowerCase()));
+  if (!pairs.length || pairs.length > 2) return;
+  const label = pairs.map(([b, a]) => `“${b}” → “${a}”`).join(', ');
+  toast(`Always write ${label}?`, 8000, {
+    label: 'Always',
+    run: async () => {
+      for (const [b, a] of pairs) {
+        // A capital that's only there because the word starts a sentence isn't part of the rule.
+        const sentenceCap = /^\p{Lu}/u.test(b) && a.slice(1) === a.slice(1).toLowerCase();
+        await addRule(b.toLowerCase(), sentenceCap ? a.toLowerCase() : a);
+      }
+      toast('Added to your dictionary. New videos will use it.');
+    },
+  });
+}
+
+// --- My styles ---------------------------------------------------------------
+function defaultStyle() {
+  const lib = app.library;
+  return lib?.styles.find((x) => x.name === lib.defaultStyle)?.style || null;
+}
+
+function renderMyStyles() {
+  const wrap = $('#my-styles');
+  const lib = app.library;
+  $('#my-styles-empty').hidden = lib.styles.length > 0;
+  wrap.replaceChildren(...lib.styles.map((entry) => {
+    const tile = document.createElement('div');
+    tile.className = 'preset mine' + (entry.name === lib.defaultStyle ? ' is-default' : '');
+    tile.title = entry.name;
+    tile.innerHTML = '<canvas width="240" height="128"></canvas><span></span><div class="tile-actions"><button class="star" title="Use for new videos">★</button><button class="del" title="Delete style">×</button></div>';
+    $('span', tile).textContent = entry.name + (entry.name === lib.defaultStyle ? ' · default' : '');
+    $('.star', tile).classList.toggle('on', entry.name === lib.defaultStyle);
+    tile.onclick = async (e) => {
+      if (e.target.closest('.tile-actions')) return;
+      const style = normalizeStyle({ ...entry.style, positionY: entry.style.positionY ?? app.style.positionY });
+      await loadFont(style);
+      setStyle(style);
+    };
+    $('.star', tile).onclick = async () => {
+      await saveLibrary({ defaultStyle: lib.defaultStyle === entry.name ? null : entry.name });
+      renderMyStyles();
+      toast(app.library.defaultStyle ? `New videos will start in “${entry.name}”.` : 'No default style.');
+    };
+    $('.del', tile).onclick = async () => {
+      if (!confirm(`Delete the style “${entry.name}”?`)) return;
+      await saveLibrary({
+        styles: lib.styles.filter((x) => x !== entry),
+        defaultStyle: lib.defaultStyle === entry.name ? null : lib.defaultStyle,
+      });
+      renderMyStyles();
+    };
+    const style = normalizeStyle(entry.style);
+    loadFont(style).then(() => drawPreset($('canvas', tile), style.emphasis !== 'off' ? 'my *style* here' : `${entry.name} Aa`, style));
+    return tile;
+  }));
+}
+
+$('#btn-save-style').addEventListener('click', async () => {
+  const name = prompt('Name this style', `My style ${app.library.styles.length + 1}`)?.trim();
+  if (!name) return;
+  const existing = app.library.styles.find((x) => x.name === name);
+  if (existing && !confirm(`Replace your saved style “${name}”?`)) return;
+  const entry = { name, style: { ...app.style } };
+  const styles = existing ? app.library.styles.map((x) => (x === existing ? entry : x)) : [...app.library.styles, entry];
+  await saveLibrary({ styles });
+  renderMyStyles();
+  toast(`Saved “${name}”. Click ★ on it to use it for every new video.`, 4000);
+});
 
 // Tabs
 function switchTab(name) {

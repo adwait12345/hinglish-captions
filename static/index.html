@@ -43,6 +43,7 @@
       <nav class="tabs" role="tablist">
         <button class="tab active" data-tab="captions">Captions</button>
         <button class="tab" data-tab="style">Style</button>
+        <button class="tab" data-tab="words">Spelling</button>
       </nav>
 
       <section class="tab-body" data-tab="captions">
@@ -67,6 +68,11 @@
       </section>
 
       <section class="tab-body" data-tab="style" hidden>
+        <div class="field">
+          <label>My styles <button id="btn-save-style" class="link">+ Save current style</button></label>
+          <div class="presets" id="my-styles"></div>
+          <p class="hint" id="my-styles-empty">Save your look once and reuse it on every video. ★ makes a style the default for new videos.</p>
+        </div>
         <div class="field">
           <label>Cinematic</label>
           <div class="presets" data-group="cinematic"></div>
@@ -169,6 +175,24 @@
           <label>Animation</label>
           <div class="seg" data-k="animation"><button data-v="none">None</button><button data-v="fade">Fade</button><button data-v="rise">Rise</button><button data-v="pop">Pop</button></div>
         </div>
+      </section>
+      <section class="tab-body" data-tab="words" hidden>
+        <h4 class="first">Hinglish spelling</h4>
+        <label class="check"><input type="checkbox" id="dict-texting"> Texting-style spelling</label>
+        <p class="hint">Rewrites the model's formal spellings the way people type: vah → woh, tumhen → tumhe, kuchh → kuch, uske lie → uske liye. <a href="#" id="dict-show-builtin">See all</a></p>
+        <ul id="dict-builtin" class="dict-list builtin" hidden></ul>
+
+        <h4>My words</h4>
+        <p class="hint">Always write a word or phrase your way. Your capitals are kept, so "mac book → MacBook" works.</p>
+        <form id="dict-add" class="dict-add">
+          <input id="dict-from" placeholder="Heard as… kiloertz" required spellcheck="false">
+          <span>→</span>
+          <input id="dict-to" placeholder="Write as… kHz" required spellcheck="false">
+          <button class="primary small">Add</button>
+        </form>
+        <ul id="dict-list" class="dict-list"></ul>
+        <p class="hint">New videos get these fixes automatically. When you correct a word in the Captions tab, you'll be offered to always fix it.</p>
+        <button id="dict-apply" class="ghost wide">Apply to this video's captions</button>
       </section>
     </aside>
 

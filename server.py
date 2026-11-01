@@ -28,6 +28,7 @@ from starlette.concurrency import run_in_threadpool
 
 ROOT = Path(__file__).parent
 PROJECTS = ROOT / "projects"
+LIBRARY = ROOT / "library" / "library.json"  # your dictionary + saved styles (shared by all projects)
 STATIC = ROOT / "static"
 CACHE = Path.home() / ".cache" / "hinglish-captions"
 PORT = 7870
@@ -211,6 +212,53 @@ def get_peaks(pid: str):
 
 
 # ---------------------------------------------------------------------------
+# Library: spelling dictionary and saved styles, shared by every project
+# ---------------------------------------------------------------------------
+
+DEFAULT_LIBRARY = {"texting": True, "rules": [], "styles": [], "defaultStyle": None}
+
+
+def load_library():
+    if LIBRARY.exists():
+        return {**DEFAULT_LIBRARY, **json.loads(LIBRARY.read_text())}
+    return dict(DEFAULT_LIBRARY)
+
+
+def spelling_table():
+    import spelling
+    lib = load_library()
+    return spelling.build_table(lib["texting"], lib["rules"])
+
+
+@app.get("/api/library")
+def get_library():
+    import spelling
+    return {**load_library(), "builtin": spelling.texting_rules()}
+
+
+@app.put("/api/library")
+async def update_library(request: Request):
+    lib = load_library()
+    body = await request.json()
+    for key in DEFAULT_LIBRARY:
+        if key in body:
+            lib[key] = body[key]
+    LIBRARY.parent.mkdir(exist_ok=True)
+    tmp = LIBRARY.with_suffix(".tmp")
+    tmp.write_text(json.dumps(lib, indent=1))
+    tmp.replace(LIBRARY)
+    return {"ok": True}
+
+
+@app.post("/api/fix-spelling")
+async def fix_spelling(request: Request):
+    """Apply the dictionary to captions sent by the editor (so it's undo-able there)."""
+    import spelling
+    captions = (await request.json())["captions"]
+    return spelling.fix_captions(captions, spelling_table())
+
+
+# ---------------------------------------------------------------------------
 # Transcription (runs in a background thread; the page polls /status)
 # ---------------------------------------------------------------------------
 
@@ -235,6 +283,8 @@ def run_transcribe(pid, max_words):
             words = cap.align_words(audio, segments)
             cap.release_models(["aligner"])
             del audio
+        import spelling
+        words = spelling.fix_word_tuples(words, spelling_table())  # your dictionary + texting style
         p = load_project(pid)
         p["words"] = [[round(s, 3), round(e, 3), w] for s, e, w in words]
         p["captions"] = to_caption_json(cap.caption_groups(words, max_words))
