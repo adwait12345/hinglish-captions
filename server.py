@@ -471,7 +471,10 @@ def run_export(pid, manifest, out_dir):
                 lines += ["file blank.png", f"duration {start - cursor:.4f}"]
             lines += [f"file {fr['file']}", f"duration {end - start:.4f}"]
             cursor = end
-        tail = max(meta["duration"] - cursor, 0) + 1.0
+        # A preview renders just a few seconds; its frame times start at 0.
+        clip_start, clip_len = manifest.get("start"), manifest.get("duration")
+        length = clip_len if clip_len else meta["duration"]
+        tail = max(length - cursor, 0) + 1.0
         lines += ["file blank.png", f"duration {tail:.4f}", "file blank.png"]
         (out_dir / "frames.txt").write_text("\n".join(lines) + "\n")
 
@@ -483,6 +486,7 @@ def run_export(pid, manifest, out_dir):
 
         def ffmpeg(audio_args):
             cmd = ["ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-progress", "pipe:1",
+                   *(["-ss", f"{clip_start:.3f}", "-t", f"{clip_len:.3f}"] if clip_len else []),
                    "-i", str(source_file(pid)), "-f", "concat", "-safe", "0", "-i", str(out_dir / "frames.txt"),
                    "-filter_complex", overlay, "-map", "[v]", *audio_map(source_file(pid)),
                    *video_encoder(meta), *audio_args, "-movflags", "+faststart", str(out)]
@@ -491,7 +495,7 @@ def run_export(pid, manifest, out_dir):
                 if line.startswith("out_time_us=") and meta["duration"]:
                     try:
                         done = int(line.split("=")[1]) / 1e6
-                        job["progress"] = min(0.99, done / meta["duration"])
+                        job["progress"] = min(0.99, done / length)
                     except ValueError:
                         pass
             return proc.wait(), proc.stderr.read()
@@ -512,20 +516,26 @@ def run_export(pid, manifest, out_dir):
 # Export happens in three steps so frames reach the disk in small batches and
 # never pile up in memory (in the browser or here): start → frames… → render.
 
+def target_dir(pid, target):
+    if target not in ("export", "preview"):
+        raise HTTPException(400, "Unknown export target.")
+    return pdir(pid) / target
+
+
 @app.post("/api/projects/{pid}/export/start")
-def export_start(pid: str):
+def export_start(pid: str, target: str = "export"):
     d = pdir(pid)
     if jobs.get(pid, {}).get("state") == "running":
         raise HTTPException(409, "Something is already running for this project.")
-    out_dir = d / "export"
+    out_dir = target_dir(pid, target)
     shutil.rmtree(out_dir, ignore_errors=True)
     out_dir.mkdir()
     return {"ok": True}
 
 
 @app.post("/api/projects/{pid}/export/frames")
-async def export_frames(pid: str, request: Request):
-    out_dir = pdir(pid) / "export"
+async def export_frames(pid: str, request: Request, target: str = "export"):
+    out_dir = target_dir(pid, target)
     if not out_dir.exists():
         raise HTTPException(409, "Start the export first.")
     form = await request.form(max_files=500)
@@ -541,8 +551,8 @@ async def export_frames(pid: str, request: Request):
 
 
 @app.post("/api/projects/{pid}/export/render")
-async def export_render(pid: str, request: Request):
-    out_dir = pdir(pid) / "export"
+async def export_render(pid: str, request: Request, target: str = "export"):
+    out_dir = target_dir(pid, target)
     manifest = await request.json()
     missing = [f["file"] for f in manifest["frames"] if not (out_dir / Path(f["file"]).name).exists()]
     if missing:
@@ -550,6 +560,14 @@ async def export_render(pid: str, request: Request):
     jobs[pid] = {"kind": "export", "state": "running", "stage": "Preparing…", "progress": 0}
     threading.Thread(target=run_export, args=(pid, manifest, out_dir), daemon=True).start()
     return jobs[pid]
+
+
+@app.get("/api/projects/{pid}/preview.mp4")
+def preview_clip(pid: str):
+    out = pdir(pid) / "preview" / "output.mp4"
+    if not out.exists():
+        raise HTTPException(404, "No preview yet.")
+    return FileResponse(out, media_type="video/mp4")
 
 
 @app.get("/api/projects/{pid}/download")

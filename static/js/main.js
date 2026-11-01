@@ -1,6 +1,6 @@
-import { DEFAULT_STYLE, PRESETS, captionAt, captionBand, captionBox, drawCaption, exportStates, normalizeStyle, presetStyle } from './render.js?v=8';
-import { fontInfo, getFonts, loadFont, nearestWeight } from './fonts.js?v=8';
-import { Timeline, fmtTime } from './timeline.js?v=8';
+import { DEFAULT_STYLE, PRESETS, captionAt, captionBand, captionBox, drawCaption, exportStates, normalizeStyle, presetStyle } from './render.js?v=9';
+import { fontInfo, getFonts, loadFont, nearestWeight } from './fonts.js?v=9';
+import { Timeline, fmtTime } from './timeline.js?v=9';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -230,7 +230,7 @@ async function openProject(pid) {
   $('#home').hidden = true;
   $('#editor').hidden = false;
   $('#project-name').value = p.name;
-  $('#hdr-field').hidden = $('#hdr-badge').hidden = !p.meta.hdr;
+  $('#hdr-field').hidden = $('#hdr-badge').hidden = $('#btn-hdr-preview').hidden = !p.meta.hdr;
   video.src = `/api/projects/${pid}/video`;
   await new Promise((r) => { video.onloadedmetadata = r; video.onerror = r; });
   fitStage();
@@ -982,6 +982,60 @@ $('#btn-srt').onclick = () => {
   URL.revokeObjectURL(a.href);
 };
 
+// Draw every caption state as a transparent PNG (same renderer as the preview),
+// send them in small batches, and have the server burn them in with ffmpeg.
+// `clip` = { start, duration } renders just that stretch (for the HDR preview).
+async function renderVideo({ target, clip = null, isCancelled, onProgress }) {
+  const pid = app.project.id;
+  await loadFont(app.style);
+  const { width: W, height: H, fps } = app.project.meta;
+  let states = exportStates(app.captions, app.style, fps || 30);
+  if (clip) {
+    const end = clip.start + clip.duration;
+    states = states.filter((s) => s.end > clip.start && s.start < end)
+      .map((s) => ({ ...s, start: Math.max(s.start, clip.start) - clip.start, end: Math.min(s.end, end) - clip.start }));
+  }
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const band = captionBand(ctx, W, H, app.captions, app.style);
+  canvas.width = W; canvas.height = band.height;
+  // Small batches, so only a few images are ever held in memory at once
+  // (long or 4K videos can have thousands).
+  const BATCH = 40;
+  const q = `?target=${target}`;
+  await api.json(`/api/projects/${pid}/export/start${q}`, { method: 'POST' });
+  const frames = [];
+  let batch = new FormData(), inBatch = 0;
+  const flush = async () => {
+    if (!inBatch) return;
+    await api.json(`/api/projects/${pid}/export/frames${q}`, { method: 'POST', body: batch });
+    batch = new FormData();
+    inBatch = 0;
+  };
+  for (let i = 0; i < states.length; i++) {
+    if (isCancelled()) return false;
+    const s = states[i];
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, W, band.height);
+    ctx.translate(0, -band.top);
+    drawCaption(ctx, W, H, s.cap, s.t, app.style);
+    const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'));
+    const name = `f${String(i).padStart(6, '0')}.png`;
+    batch.append('frames', blob, name);
+    inBatch++;
+    frames.push({ file: name, start: s.start, end: s.end });
+    if (inBatch >= BATCH) await flush();
+    if (i % 5 === 0) onProgress(`Drawing captions… ${i + 1} / ${states.length}`, (i / states.length) * 0.4);
+  }
+  await flush();
+  await api.json(`/api/projects/${pid}/export/render${q}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ width: W, height: band.height, offsetY: band.top, frames, hdrBoost: app.style.hdrBoost, ...(clip || {}) }),
+  });
+  await poll(pid, (st) => onProgress(st.stage || 'Rendering…', 0.4 + (st.progress || 0) * 0.6));
+  return true;
+}
+
 $('#btn-export').onclick = async () => {
   const dlg = $('#export-dlg');
   const stage = $('#export-stage'), bar = $('#export-bar'), dl = $('#export-download');
@@ -992,46 +1046,8 @@ $('#btn-export').onclick = async () => {
   video.pause();
   const pid = app.project.id;
   try {
-    await loadFont(app.style);
-    const { width: W, height: H, fps } = app.project.meta;
-    const states = exportStates(app.captions, app.style, fps || 30);
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    const band = captionBand(ctx, W, H, app.captions, app.style);
-    canvas.width = W; canvas.height = band.height;
-    // Draw and send frames in small batches, so only a few images are ever
-    // held in memory at once (long or 4K videos can have thousands).
-    const BATCH = 40;
-    await api.json(`/api/projects/${pid}/export/start`, { method: 'POST' });
-    const frames = [];
-    let batch = new FormData(), inBatch = 0;
-    const flush = async () => {
-      if (!inBatch) return;
-      await api.json(`/api/projects/${pid}/export/frames`, { method: 'POST', body: batch });
-      batch = new FormData();
-      inBatch = 0;
-    };
-    for (let i = 0; i < states.length; i++) {
-      if (!dlg.open) return;
-      const s = states[i];
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, W, band.height);
-      ctx.translate(0, -band.top);
-      drawCaption(ctx, W, H, s.cap, s.t, app.style);
-      const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'));
-      const name = `f${String(i).padStart(6, '0')}.png`;
-      batch.append('frames', blob, name);
-      inBatch++;
-      frames.push({ file: name, start: s.start, end: s.end });
-      if (inBatch >= BATCH) await flush();
-      if (i % 5 === 0) setP(`Drawing captions… ${i + 1} / ${states.length}`, (i / states.length) * 0.4);
-    }
-    await flush();
-    await api.json(`/api/projects/${pid}/export/render`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ width: W, height: band.height, offsetY: band.top, frames, hdrBoost: app.style.hdrBoost }),
-    });
-    await poll(pid, (s) => setP(s.stage || 'Rendering…', 0.4 + (s.progress || 0) * 0.6));
+    const done = await renderVideo({ target: 'export', isCancelled: () => !dlg.open, onProgress: setP });
+    if (!done) return;
     setP('Done! Your captioned video is ready.', 1);
     dl.href = `/api/projects/${pid}/download?t=${Date.now()}`;
     dl.hidden = false;
@@ -1041,7 +1057,41 @@ $('#btn-export').onclick = async () => {
     $('#export-close').textContent = 'Close';
   }
 };
+
+// HDR preview: browsers can't draw HDR captions on a canvas, but they can play
+// HDR video. So render ~4 s around the playhead through the real export
+// pipeline and play that: exactly what the export will look like.
+const PREVIEW_SECONDS = 4;
+$('#btn-hdr-preview').onclick = async () => {
+  if (!app.captions.length) return toast('Generate captions first.');
+  const dlg = $('#hdr-dlg');
+  const player = $('#hdr-player');
+  const status = $('#hdr-status');
+  player.removeAttribute('src');
+  player.load();
+  player.hidden = true;
+  $('#hdr-screen').hidden = matchMedia('(dynamic-range: high)').matches;
+  dlg.showModal();
+  video.pause();
+  const start = Math.max(0, Math.min(app.time - 0.5, app.duration - PREVIEW_SECONDS));
+  const clip = { start, duration: Math.min(PREVIEW_SECONDS, app.duration - start) };
+  try {
+    const done = await renderVideo({
+      target: 'preview', clip, isCancelled: () => !dlg.open,
+      onProgress: (text, f) => { status.textContent = `${text} (${Math.round(f * 100)}%)`; },
+    });
+    if (!done) return;
+    status.textContent = `HDR preview of ${fmtTime(clip.start, false)}–${fmtTime(clip.start + clip.duration, false)}, exactly as it will export.`;
+    player.src = `/api/projects/${app.project.id}/preview.mp4?t=${Date.now()}`;
+    player.hidden = false;
+    player.play().catch(() => {});
+  } catch (e) {
+    status.textContent = `Preview failed: ${e.message}`;
+  }
+};
+$('#hdr-close').onclick = () => { $('#hdr-player').pause(); $('#hdr-dlg').close(); };
 $('#export-close').onclick = () => $('#export-dlg').close();
+
 
 // ---------------------------------------------------------------------------
 // Misc wiring

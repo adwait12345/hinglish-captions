@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hinglish Captions</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%237c5cff'/><rect x='6' y='19' width='20' height='5' rx='2' fill='white'/><rect x='9' y='11' width='14' height='5' rx='2' fill='%23ffe600'/></svg>">
-  <link rel="stylesheet" href="style.css?v=8">
+  <link rel="stylesheet" href="style.css?v=9">
 </head>
 <body>
   <!-- Home: upload + recent projects -->
@@ -218,6 +218,7 @@
       <div class="transport">
         <button id="btn-play" class="ghost icon play" title="Play / pause (Space)">▶</button>
         <span id="time" class="time">0:00.00 / 0:00.00</span>
+        <button id="btn-hdr-preview" class="ghost small" title="Render a few seconds around the playhead in real HDR" hidden>Preview HDR</button>
         <span id="hdr-badge" class="hdr-badge" title="HDR video: exported as 10-bit HDR with HDR-correct captions. The preview here is approximate." hidden>HDR</span>
       </div>
     </section>
@@ -259,6 +260,15 @@
     </div>
   </dialog>
 
+  <!-- HDR preview: a short clip rendered through the real export -->
+  <dialog id="hdr-dlg" class="dlg hdr-dlg">
+    <h3>HDR preview</h3>
+    <p id="hdr-status">Preparing…</p>
+    <video id="hdr-player" controls loop playsinline hidden></video>
+    <p id="hdr-screen" class="hint" hidden>This screen isn't showing HDR right now, so the preview is shown in SDR. Drag this window to your MacBook's built-in XDR display to see true HDR brightness.</p>
+    <div class="dlg-actions"><button id="hdr-close" class="ghost">Close</button></div>
+  </dialog>
+
   <!-- In-page confirm (browser pop-ups are blocked in some windows) -->
   <dialog id="ask-dlg" class="dlg">
     <p id="ask-msg"></p>
@@ -269,6 +279,6 @@
   </dialog>
 
   <div id="toast" class="toast" hidden></div>
-  <script type="module" src="js/main.js?v=8"></script>
+  <script type="module" src="js/main.js?v=9"></script>
 </body>
 </html>
