@@ -7,3 +7,4 @@ __pycache__/
 *.mov
 *.wav
 .gradio/
+projects/

@@ -3,3 +3,8 @@ transformers
 accelerate
 gradio
 numpy
+fastapi
+uvicorn
+python-multipart
+fonttools
+pillow

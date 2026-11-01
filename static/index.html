@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hinglish Captions</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%237c5cff'/><rect x='6' y='19' width='20' height='5' rx='2' fill='white'/><rect x='9' y='11' width='14' height='5' rx='2' fill='%23ffe600'/></svg>">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Home: upload + recent projects -->
+  <main id="home" class="home" hidden>
+    <div class="home-inner">
+      <h1><span class="logo"></span> Hinglish Captions</h1>
+      <p class="sub">Drop a video. Get word-perfect Hinglish captions you can style, adjust and burn in. Free and offline.</p>
+      <label id="drop" class="drop">
+        <input id="file" type="file" accept="video/*" hidden>
+        <div class="drop-icon">⬆</div>
+        <div class="drop-title">Drop a video here, or click to choose</div>
+        <div class="drop-hint">MP4, MOV, or anything ffmpeg can read</div>
+        <div class="upload-bar" hidden><div></div></div>
+      </label>
+      <section id="recent" hidden>
+        <h2>Recent projects</h2>
+        <ul id="recent-list"></ul>
+      </section>
+    </div>
+  </main>
+
+  <!-- Editor -->
+  <div id="editor" class="editor" hidden>
+    <header class="topbar">
+      <button id="btn-home" class="ghost icon" title="All projects">←</button>
+      <span class="logo small"></span>
+      <input id="project-name" class="project-name" spellcheck="false" aria-label="Project name">
+      <div class="spacer"></div>
+      <span id="save-state" class="save-state"></span>
+      <button id="btn-srt" class="ghost">Download .srt</button>
+      <button id="btn-export" class="primary">Export video</button>
+    </header>
+
+    <aside class="panel">
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="captions">Captions</button>
+        <button class="tab" data-tab="style">Style</button>
+      </nav>
+
+      <section class="tab-body" data-tab="captions">
+        <div id="generate-box" class="generate">
+          <h3>Generate captions</h3>
+          <p>Transcribes your Hinglish speech and times every word to the audio.</p>
+          <label class="row">Words per caption <output id="mw-out">4</output></label>
+          <input id="mw" type="range" min="1" max="10" value="4">
+          <button id="btn-generate" class="primary wide">Generate captions</button>
+          <div id="gen-progress" class="progress" hidden><div class="bar"><div></div></div><span></span></div>
+        </div>
+        <div id="caption-tools" class="caption-tools" hidden>
+          <label class="row">Words per caption <output id="mw2-out">4</output></label>
+          <div class="row gap">
+            <input id="mw2" type="range" min="1" max="10" value="4">
+            <button id="btn-regroup" class="ghost small" title="Re-split all captions (undo-able)">Re-split</button>
+          </div>
+        </div>
+        <ol id="caption-list" class="caption-list"></ol>
+      </section>
+
+      <section class="tab-body" data-tab="style" hidden>
+        <div class="field">
+          <label>Presets</label>
+          <div id="presets" class="presets"></div>
+        </div>
+        <div class="field">
+          <label>Font</label>
+          <button id="font-btn" class="font-btn"><span id="font-name"></span><span class="chev">▾</span></button>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Weight</label><select data-k="fontWeight" data-num></select></div>
+          <div class="field"><label>Size <output data-o="fontSize"></output></label><input type="range" data-k="fontSize" min="2" max="16" step="0.1"></div>
+        </div>
+        <div class="grid2">
+          <label class="check"><input type="checkbox" data-k="uppercase"> UPPERCASE</label>
+          <div class="field"><label>Text</label><input type="color" data-k="textColor"></div>
+        </div>
+
+        <h4>Highlight spoken word</h4>
+        <div class="seg" data-k="highlightMode">
+          <button data-v="none">Off</button><button data-v="color">Colour</button><button data-v="box">Box</button>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Highlight</label><input type="color" data-k="highlightColor"></div>
+          <div class="field" data-show="highlightMode=box"><label>Text on box</label><input type="color" data-k="highlightTextColor"></div>
+        </div>
+        <div class="field"><label>Grow spoken word <output data-o="activeScale"></output></label><input type="range" data-k="activeScale" min="1" max="1.4" step="0.01"></div>
+        <div class="field">
+          <label>Show words</label>
+          <div class="seg" data-k="display"><button data-v="full">All at once</button><button data-v="progressive">As they're said</button></div>
+        </div>
+
+        <h4>Outline &amp; shadow</h4>
+        <div class="grid2">
+          <div class="field"><label>Outline <output data-o="strokeWidth"></output></label><input type="range" data-k="strokeWidth" min="0" max="30" step="1"></div>
+          <div class="field"><label>Colour</label><input type="color" data-k="strokeColor"></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Shadow <output data-o="shadowOpacity"></output></label><input type="range" data-k="shadowOpacity" min="0" max="1" step="0.05"></div>
+          <div class="field"><label>Colour</label><input type="color" data-k="shadowColor"></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>Blur <output data-o="shadowBlur"></output></label><input type="range" data-k="shadowBlur" min="0" max="60" step="1"></div>
+          <div class="field"><label>Offset <output data-o="shadowOffset"></output></label><input type="range" data-k="shadowOffset" min="-20" max="20" step="1"></div>
+        </div>
+
+        <h4>Background box</h4>
+        <label class="check"><input type="checkbox" data-k="bgEnabled"> Show background</label>
+        <div class="grid2" data-show="bgEnabled">
+          <div class="field"><label>Colour</label><input type="color" data-k="bgColor"></div>
+          <div class="field"><label>Opacity <output data-o="bgOpacity"></output></label><input type="range" data-k="bgOpacity" min="0" max="1" step="0.05"></div>
+        </div>
+        <div class="field" data-show="bgEnabled"><label>Roundness <output data-o="bgRadius"></output></label><input type="range" data-k="bgRadius" min="0" max="50" step="1"></div>
+
+        <h4>Layout &amp; motion</h4>
+        <div class="field"><label>Vertical position <output data-o="positionY"></output></label><input type="range" data-k="positionY" min="5" max="95" step="0.5"></div>
+        <div class="grid2">
+          <div class="field"><label>Max width <output data-o="maxWidth"></output></label><input type="range" data-k="maxWidth" min="30" max="100" step="1"></div>
+          <div class="field"><label>Line height <output data-o="lineHeight"></output></label><input type="range" data-k="lineHeight" min="0.8" max="2" step="0.05"></div>
+        </div>
+        <div class="field">
+          <label>Animation</label>
+          <div class="seg" data-k="animation"><button data-v="none">None</button><button data-v="pop">Pop in</button></div>
+        </div>
+      </section>
+    </aside>
+
+    <section class="stage-wrap">
+      <div id="stage" class="stage">
+        <video id="video" playsinline preload="auto"></video>
+        <canvas id="overlay" title="Click to play/pause · drag a caption to move it"></canvas>
+      </div>
+      <div class="transport">
+        <button id="btn-play" class="ghost icon play" title="Play / pause (Space)">▶</button>
+        <span id="time" class="time">0:00.00 / 0:00.00</span>
+      </div>
+    </section>
+
+    <section class="timeline-wrap">
+      <div class="tl-toolbar">
+        <button id="btn-split" class="ghost small" title="Split at playhead (S)">✂ Split</button>
+        <button id="btn-merge" class="ghost small" title="Merge with next caption (M)">⇥ Merge</button>
+        <button id="btn-add" class="ghost small" title="Add caption at playhead (A)">＋ Add</button>
+        <button id="btn-delete" class="ghost small" title="Delete caption (Delete)">🗑 Delete</button>
+        <span class="divider"></span>
+        <button id="btn-undo" class="ghost small icon" title="Undo (⌘Z)">↶</button>
+        <button id="btn-redo" class="ghost small icon" title="Redo (⇧⌘Z)">↷</button>
+        <div class="spacer"></div>
+        <button id="btn-fit" class="ghost small">Fit</button>
+        <input id="zoom" type="range" min="0" max="100" value="40" title="Zoom (⌘ + scroll)">
+      </div>
+      <div id="timeline" class="timeline"></div>
+    </section>
+  </div>
+
+  <!-- Font picker -->
+  <div id="font-pop" class="font-pop" hidden>
+    <input id="font-search" placeholder="Search 2,000+ fonts…" spellcheck="false">
+    <div class="seg small" id="font-filter">
+      <button data-v="all" class="on">All</button><button data-v="google">Google</button><button data-v="system">On this Mac</button>
+    </div>
+    <ul id="font-list"></ul>
+  </div>
+
+  <!-- Export dialog -->
+  <dialog id="export-dlg" class="dlg">
+    <h3>Export video</h3>
+    <p id="export-stage">Preparing…</p>
+    <div class="bar big"><div id="export-bar"></div></div>
+    <div class="dlg-actions">
+      <button id="export-close" class="ghost">Close</button>
+      <a id="export-download" class="primary btn" hidden>Download video</a>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" hidden></div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

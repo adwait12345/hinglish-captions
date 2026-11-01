@@ -1,6 +1,6 @@
 # Hinglish Captions
 
-Upload a video, get a ready-to-use `.srt` subtitle file. Built for creators who talk in **Hinglish**: Hindi and English mixed, written in Roman script the way you'd actually type it.
+Upload a video, get word-perfect captions, style them, adjust them on a timeline, and burn them into the video, or download a plain `.srt`. Built for creators who talk in **Hinglish**: Hindi and English mixed, written in Roman script the way you'd actually type it.
 
 ```
 1
@@ -18,6 +18,15 @@ interesting hai to
 - **Understands pauses.** Captions clear when you stop talking and flow smoothly while you speak.
 - **Reel-style captions.** A slider sets 1–10 words per caption, and you can change it after the captions are made, with no re-processing.
 
+## The caption editor
+
+- **Any font.** All 1,900+ Google Fonts plus every font installed on your computer, searchable.
+- **Animated captions.** The spoken word is highlighted in colour or a box, it can grow as it's spoken, words can appear as they're said, and captions pop in. There are presets too: Bold Pop, Hormozi, Clean, Boxed, Karaoke, and Word by word.
+- **Full styling.** Size, weight, colours, outline, shadow, background box, line width and position. You can also drag the caption up or down right on the video.
+- **Timeline.** It shows the audio waveform. Drag captions to move them, drag their edges to retime them, and split (S), merge (M), add (A) or delete them. Undo and redo work with ⌘Z and ⇧⌘Z.
+- **What you see is what you get.** The preview and the export use the same renderer, so the burned-in video matches the editor pixel for pixel, in full resolution with the original audio.
+- **Autosave.** Projects are saved as you work and listed on the home screen.
+
 ## How it works
 
 1. **Transcription:** [Oriserve/Whisper-Hindi2Hinglish-Prime](https://huggingface.co/Oriserve/Whisper-Hindi2Hinglish-Prime), a Whisper large-v3 model fine-tuned on Hinglish speech.
@@ -32,23 +41,26 @@ You need Python 3.10+ and ffmpeg:
 brew install python ffmpeg
 ```
 
-Then double-click **`Start Captions.command`**. The first run installs dependencies and opens the app in your browser.
+Then double-click **`Start Captions.command`**. The first run installs dependencies and opens the editor in your browser.
 
 Or from a terminal:
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-.venv/bin/python app.py                       # web app at http://127.0.0.1:7860
+.venv/bin/python server.py                    # caption editor at http://127.0.0.1:7870
+.venv/bin/python app.py                       # simple SRT-only app at http://127.0.0.1:7860
 .venv/bin/python app.py my_video.mp4          # or: straight to my_video.srt
 .venv/bin/python app.py my_video.mp4 2        # ...with 2 words per caption
 ```
+
+Projects (your uploaded videos, captions and exports) are stored in the `projects/` folder.
 
 **First run downloads about 7.5 GB of models** (6.2 GB transcription + 1.3 GB alignment). They're cached in `~/.cache/huggingface` and only downloaded once.
 
 ## Speed
 
-On an Apple M4 with 16 GB RAM, a 30-second clip takes about 30–35 seconds. It uses the Apple GPU (MPS) automatically and falls back to CPU elsewhere, which is much slower.
+On an Apple M4 with 16 GB RAM, captioning a 30-second clip takes about 30–35 seconds, and burning captions into a 14-second 1080×1920 reel takes about 10 seconds. It uses the Apple GPU (MPS) automatically and falls back to CPU elsewhere, which is much slower.
 
 ## Tips
 

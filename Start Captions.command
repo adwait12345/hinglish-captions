@@ -1,5 +1,5 @@
 #!/bin/bash
-# Double-click to open the Hinglish caption maker in your browser.
+# Double-click to open the Hinglish caption editor in your browser.
 cd "$(dirname "$0")"
 if [ ! -d .venv ]; then
   PY=""
@@ -10,6 +10,8 @@ if [ ! -d .venv ]; then
     echo "Python 3.10+ is needed. Install it with: brew install python"
     read -n 1 -s -r -p "Press any key to close"; exit 1
   fi
-  "$PY" -m venv .venv && .venv/bin/pip install -r requirements.txt
+  "$PY" -m venv .venv
 fi
-.venv/bin/python app.py
+# Quick no-op when everything is already installed; picks up new deps after a git pull.
+.venv/bin/pip install -q -r requirements.txt
+.venv/bin/python server.py
