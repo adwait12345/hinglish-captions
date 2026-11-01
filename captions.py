@@ -134,15 +134,25 @@ def speech_regions(audio, sr=16000, frame=0.02, min_gap=0.3, max_len=20.0):
         else:
             merged.append([s, e])
     total = len(audio) / sr
+    # Loudness smoothed over 200 ms, for finding breaths between sentences.
+    smooth = np.convolve(db, np.ones(10) / 10, mode="same")
+
+    def quietest(a, b):
+        i0, i1 = int(a / frame), max(int(a / frame) + 1, int(b / frame))
+        return (i0 + int(np.argmin(smooth[i0:i1]))) * frame
+
     out = []
     for s, e in merged:
         if e - s < 0.25:
             continue
         s, e = max(0.0, s - 0.1), min(total, e + 0.1)
-        # Whisper only hears 30s at a time, so hard-split anything too long.
+        # Whisper only hears 30 s at a time. Long stretches (e.g. speech over
+        # background music, which never goes quiet) are cut at the quietest
+        # moment between 5 s and 20 s in, not blindly mid-word.
         while e - s > max_len:
-            out.append((s, s + max_len))
-            s += max_len
+            cut = quietest(s + 5.0, s + max_len)
+            out.append((s, cut))
+            s = cut
         out.append((s, e))
     return out
 
@@ -156,8 +166,12 @@ def transcribe(audio, model_id=MODEL_ID):
     out = []
     for s, e in regions:  # one spoken stretch at a time: only ~20 s of audio in memory
         clip = np.array(audio[int(s * sr): int(e * sr)], dtype=np.float32)
+        # language="hi": this model is trained for Hindi -> Hinglish. Left to
+        # guess, Whisper can mistake a music intro for another language and
+        # return junk like "nan"; English sentences come out the same either way.
+        # num_beams=1 (greedy): same text in tests, ~2x faster.
         text = pipe({"raw": clip, "sampling_rate": sr},
-                    generate_kwargs={"task": "transcribe", "num_beams": 1})["text"].strip()  # greedy: same text, ~2x faster
+                    generate_kwargs={"task": "transcribe", "language": "hi", "num_beams": 1})["text"].strip()
         if text:
             out.append((s, e, text))
     return out

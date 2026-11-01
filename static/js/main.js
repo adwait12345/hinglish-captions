@@ -285,9 +285,9 @@ $('#btn-generate').addEventListener('click', async () => {
 
 async function trackTranscription(pid) {
   pollingFor = pid;
-  const box = $('#gen-progress');
+  const box = app.captions.length ? $('#regen-progress') : $('#gen-progress');
   box.hidden = false;
-  $('#btn-generate').disabled = true;
+  $('#btn-generate').disabled = $('#btn-retranscribe').disabled = true;
   try {
     await poll(pid, (s) => {
       $('.bar > div', box).style.width = `${(s.progress || 0) * 100}%`;
@@ -296,7 +296,8 @@ async function trackTranscription(pid) {
     if (app.project?.id !== pid) return;
     const p = await api.json(`/api/projects/${pid}`);
     app.captions = withIds(p.captions || []);
-    app.commit();
+    app.selectedId = null;
+    app.commit(); // the old captions stay one ⌘Z away
     showCaptionsUI();
     toast(`${app.captions.length} captions ready. Press Space to play.`);
   } catch (e) {
@@ -304,9 +305,18 @@ async function trackTranscription(pid) {
   } finally {
     pollingFor = null;
     box.hidden = true;
-    $('#btn-generate').disabled = false;
+    $('#btn-generate').disabled = $('#btn-retranscribe').disabled = false;
   }
 }
+
+$('#btn-retranscribe').addEventListener('click', async () => {
+  if (!confirm('Listen to the video again and replace all captions? Your current captions stay available with Undo (⌘Z).')) return;
+  const pid = app.project.id;
+  try {
+    await api.form(`/api/projects/${pid}/transcribe`, { max_words: $('#mw2').value });
+    trackTranscription(pid);
+  } catch (e) { toast(e.message, 5000); }
+});
 
 $('#btn-regroup').addEventListener('click', async () => {
   try {
