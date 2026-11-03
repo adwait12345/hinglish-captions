@@ -567,8 +567,10 @@ function togglePlay() {
   if (!app.project) return;
   if (app.playing) video.pause(); else video.play();
 }
-video.addEventListener('play', () => { $('#btn-play').textContent = '❚❚'; syncMatte(true); requestDraw(); });
-video.addEventListener('pause', () => { $('#btn-play').textContent = '▶'; syncMatte(true); requestDraw(); });
+const PLAY_ICON = $('#btn-play').innerHTML;
+const PAUSE_ICON = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path class="fill" d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg>';
+video.addEventListener('play', () => { $('#btn-play').innerHTML = PAUSE_ICON; syncMatte(true); requestDraw(); });
+video.addEventListener('pause', () => { $('#btn-play').innerHTML = PLAY_ICON; syncMatte(true); requestDraw(); });
 video.addEventListener('seeked', () => { syncMatte(true); requestDraw(); });
 $('#btn-play').onclick = togglePlay;
 
@@ -758,6 +760,12 @@ const fmt = {
   shadowBlur: (v) => v, shadowOffset: (v) => v, bgRadius: (v) => v, hdrBoost: pct,
 };
 
+// Colour fields show their hex code next to the swatch, like a design tool.
+function showHex(field) {
+  $('.hex', field).textContent = $('input', field).value.slice(1).toUpperCase();
+}
+document.addEventListener('input', (e) => e.target.closest?.('.color') && showHex(e.target.closest('.color')));
+
 // Which style keys each font button / weight list controls.
 const FONT_KEYS = {
   base: { family: 'fontFamily', source: 'fontSource', weight: 'fontWeight', italic: 'fontItalic' },
@@ -773,6 +781,7 @@ function syncStyleControls() {
     else if (el.tagName !== 'SELECT') el.value = s[k];
   });
   $$('[data-o]').forEach((o) => (o.value = (fmt[o.dataset.o] || String)(s[o.dataset.o])));
+  $$('.color').forEach(showHex);
   $$('[data-show], [data-hide]').forEach((el) => {
     const rule = el.dataset.show ?? el.dataset.hide;
     const [k, v] = rule.split('=');
@@ -875,14 +884,17 @@ $$('.font-btn').forEach((btn) => btn.addEventListener('click', (e) => {
   e.stopPropagation();
   if (!fontPop.hidden && fontTarget === btn.dataset.font) return (fontPop.hidden = true);
   fontTarget = btn.dataset.font;
-  const r = btn.getBoundingClientRect();
-  Object.assign(fontPop.style, { left: `${r.left}px`, top: `${Math.max(8, Math.min(r.bottom + 6, innerHeight - 430))}px` });
+  // Open beside the design panel (like an inspector popover), level with the button.
+  const r = btn.getBoundingClientRect(), panel = btn.closest('.panel').getBoundingClientRect();
+  const left = panel.left - 300 - 8 >= 8 ? panel.left - 300 - 8 : Math.min(r.left, innerWidth - 308);
+  Object.assign(fontPop.style, { left: `${left}px`, top: `${Math.max(8, Math.min(r.top, innerHeight - 430))}px` });
   fontPop.hidden = false;
   $('#font-search').value = '';
   $('#font-search').focus();
   renderFontList();
 }));
 document.addEventListener('pointerdown', (e) => { if (!fontPop.hidden && !fontPop.contains(e.target) && !e.target.closest('.font-btn')) fontPop.hidden = true; });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') fontPop.hidden = true; });
 $('#font-search').addEventListener('input', renderFontList);
 $('#font-filter').addEventListener('click', (e) => {
   const b = e.target.closest('button');
@@ -1103,9 +1115,11 @@ $('#save-style-form').addEventListener('submit', async (e) => {
 });
 
 // Tabs
+// Each side panel has its own tabs: switching one leaves the other alone.
 function switchTab(name) {
-  $$('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
-  $$('.tab-body').forEach((b) => (b.hidden = b.dataset.tab !== name));
+  const panel = $(`.tab-body[data-tab="${name}"]`).closest('.panel');
+  $$('.tab', panel).forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
+  $$('.tab-body', panel).forEach((b) => (b.hidden = b.dataset.tab !== name));
 }
 $$('.tab').forEach((t) => (t.onclick = () => switchTab(t.dataset.tab)));
 

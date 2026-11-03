@@ -5,7 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hinglish Captions</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%237c5cff'/><rect x='6' y='19' width='20' height='5' rx='2' fill='white'/><rect x='9' y='11' width='14' height='5' rx='2' fill='%23ffe600'/></svg>">
-  <link rel="stylesheet" href="style.css?v=10">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="style.css?v=11">
 </head>
 <body>
   <!-- Home: upload + recent projects -->
@@ -15,7 +18,7 @@
       <p class="sub">Drop a video. Get word-perfect Hinglish captions you can style, adjust and burn in. Free and offline.</p>
       <label id="drop" class="drop">
         <input id="file" type="file" accept="video/*" hidden>
-        <div class="drop-icon">⬆</div>
+        <div class="drop-icon"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L8 8m4-4l4 4M4 20h16"/></svg></div>
         <div class="drop-title">Drop a video here, or click to choose</div>
         <div class="drop-hint">MP4, MOV, or anything ffmpeg can read</div>
         <div class="upload-bar" hidden><div></div></div>
@@ -30,23 +33,20 @@
   <!-- Editor -->
   <div id="editor" class="editor" hidden>
     <header class="topbar">
-      <button id="btn-home" class="ghost icon" title="All projects">←</button>
+      <button id="btn-home" class="icon-btn" title="All projects"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
       <span class="logo small"></span>
       <input id="project-name" class="project-name" spellcheck="false" aria-label="Project name">
       <div class="spacer"></div>
       <span id="save-state" class="save-state"></span>
-      <button id="btn-srt" class="ghost">Download .srt</button>
+      <button id="btn-srt" class="ghost" title="Download the captions as a subtitle file"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 20h14"/></svg> SRT</button>
       <button id="btn-export" class="primary">Export video</button>
     </header>
 
-    <aside class="panel">
+    <aside class="panel left">
       <nav class="tabs" role="tablist">
         <button class="tab active" data-tab="captions">Captions</button>
-        <button class="tab" data-tab="style">Style</button>
-        <button class="tab" data-tab="saved">My styles</button>
         <button class="tab" data-tab="words">Spelling</button>
       </nav>
-
       <section class="tab-body" data-tab="captions">
         <div id="generate-box" class="generate">
           <h3>Generate captions</h3>
@@ -62,13 +62,51 @@
             <input id="mw2" type="range" min="1" max="10" value="4">
             <button id="btn-regroup" class="ghost small" title="Re-split all captions (undo-able)">Re-split</button>
           </div>
-          <button id="btn-retranscribe" class="ghost small wide retranscribe" title="Listen to the video again and replace all captions">↻ Re-transcribe from audio</button>
+          <button id="btn-retranscribe" class="ghost small wide retranscribe" title="Listen to the video again and replace all captions"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 11-2.3-5.7L20 8.5"/><path d="M20 4v4.5h-4.5"/></svg> Re-transcribe from audio</button>
           <div id="regen-progress" class="progress" hidden><div class="bar"><div></div></div><span></span></div>
         </div>
         <ol id="caption-list" class="caption-list"></ol>
       </section>
+      <section class="tab-body" data-tab="words" hidden>
+        <h4 class="first">Hinglish spelling</h4>
+        <label class="check"><input type="checkbox" id="dict-texting"> Texting-style spelling</label>
+        <p class="hint">Rewrites the model's formal spellings the way people type: vah → woh, tumhen → tumhe, kuchh → kuch, uske lie → uske liye. <a href="#" id="dict-show-builtin">See all</a></p>
+        <ul id="dict-builtin" class="dict-list builtin" hidden></ul>
 
-      <section class="tab-body" data-tab="style" hidden>
+        <h4>My words</h4>
+        <p class="hint">Always write a word or phrase your way. Your capitals are kept, so "mac book → MacBook" works.</p>
+        <form id="dict-add" class="dict-add">
+          <input id="dict-from" placeholder="Heard as… kiloertz" required spellcheck="false">
+          <span>→</span>
+          <input id="dict-to" placeholder="Write as… kHz" required spellcheck="false">
+          <button class="primary small">Add</button>
+        </form>
+        <ul id="dict-list" class="dict-list"></ul>
+        <p class="hint">New videos get these fixes automatically. When you correct a word in the Captions tab, you'll be offered to always fix it.</p>
+        <button id="dict-apply" class="ghost wide">Apply to this video's captions</button>
+      </section>
+    </aside>
+
+    <section class="stage-wrap">
+      <div id="stage" class="stage">
+        <video id="video" playsinline preload="auto"></video>
+        <video id="matte" class="matte" muted playsinline preload="auto"></video>
+        <canvas id="overlay" title="Click to play/pause · drag a caption to move it"></canvas>
+      </div>
+      <div class="transport">
+        <button id="btn-play" class="play" title="Play / pause (Space)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" class="fill"/></svg></button>
+        <span id="time" class="time">0:00.00 / 0:00.00</span>
+        <button id="btn-hdr-preview" class="ghost small" title="Render a few seconds around the playhead in real HDR" hidden><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v2M12 19v2M5 12H3M21 12h-2M6.3 6.3l1.4 1.4M16.3 16.3l1.4 1.4M6.3 17.7l1.4-1.4M16.3 7.7l1.4-1.4"/><circle cx="12" cy="12" r="4"/></svg> Preview HDR</button>
+        <span id="hdr-badge" class="hdr-badge" title="HDR video: exported as 10-bit HDR with HDR-correct captions. The preview here is approximate." hidden>HDR</span>
+      </div>
+    </section>
+
+    <aside class="panel right">
+      <nav class="tabs" role="tablist">
+        <button class="tab active" data-tab="style">Design</button>
+        <button class="tab" data-tab="saved">My styles</button>
+      </nav>
+      <section class="tab-body" data-tab="style">
         <button id="goto-saved" class="save-banner">★ Like this look? <b>Save it to My styles</b></button>
         <div class="field">
           <label>Cinematic</label>
@@ -96,7 +134,7 @@
           <div class="field"><label>Case</label>
             <div class="seg" data-k="textCase"><button data-v="none">Aa</button><button data-v="upper">AA</button><button data-v="lower">aa</button></div>
           </div>
-          <div class="field"><label>Colour</label><input type="color" data-k="textColor"></div>
+          <div class="field"><label>Colour</label><label class="color"><input type="color" data-k="textColor"><span class="hex"></span></label></div>
         </div>
 
         <h4>Accent words</h4>
@@ -119,7 +157,7 @@
             <div class="field"><label>Case</label>
               <div class="seg" data-k="emCase"><button data-v="same">=</button><button data-v="none">Aa</button><button data-v="upper">AA</button><button data-v="lower">aa</button></div>
             </div>
-            <div class="field"><label>Colour</label><input type="color" data-k="emColor"></div>
+            <div class="field"><label>Colour</label><label class="color"><input type="color" data-k="emColor"><span class="hex"></span></label></div>
           </div>
           <div class="field"><label>Arrangement</label>
             <div class="seg" data-k="layout"><button data-v="flow">Inline</button><button data-v="stack">Stacked</button></div>
@@ -131,8 +169,8 @@
           <button data-v="none">Off</button><button data-v="color">Colour</button><button data-v="box">Box</button>
         </div>
         <div class="grid2" data-hide="highlightMode=none">
-          <div class="field"><label>Highlight</label><input type="color" data-k="highlightColor"></div>
-          <div class="field" data-show="highlightMode=box"><label>Text on box</label><input type="color" data-k="highlightTextColor"></div>
+          <div class="field"><label>Highlight</label><label class="color"><input type="color" data-k="highlightColor"><span class="hex"></span></label></div>
+          <div class="field" data-show="highlightMode=box"><label>Text on box</label><label class="color"><input type="color" data-k="highlightTextColor"><span class="hex"></span></label></div>
         </div>
         <div class="field"><label>Grow spoken word <output data-o="activeScale"></output></label><input type="range" data-k="activeScale" min="1" max="1.4" step="0.01"></div>
         <div class="field">
@@ -143,11 +181,11 @@
         <h4>Outline, shadow &amp; glow</h4>
         <div class="grid2">
           <div class="field"><label>Outline <output data-o="strokeWidth"></output></label><input type="range" data-k="strokeWidth" min="0" max="30" step="1"></div>
-          <div class="field"><label>Colour</label><input type="color" data-k="strokeColor"></div>
+          <div class="field"><label>Colour</label><label class="color"><input type="color" data-k="strokeColor"><span class="hex"></span></label></div>
         </div>
         <div class="grid2">
           <div class="field"><label>Shadow / glow <output data-o="shadowOpacity"></output></label><input type="range" data-k="shadowOpacity" min="0" max="1" step="0.05"></div>
-          <div class="field"><label>Colour</label><input type="color" data-k="shadowColor"></div>
+          <div class="field"><label>Colour</label><label class="color"><input type="color" data-k="shadowColor"><span class="hex"></span></label></div>
         </div>
         <div class="grid2">
           <div class="field"><label>Softness <output data-o="shadowBlur"></output></label><input type="range" data-k="shadowBlur" min="0" max="80" step="1"></div>
@@ -157,7 +195,7 @@
         <h4>Background box</h4>
         <label class="check"><input type="checkbox" data-k="bgEnabled"> Show background</label>
         <div class="grid2" data-show="bgEnabled">
-          <div class="field"><label>Colour</label><input type="color" data-k="bgColor"></div>
+          <div class="field"><label>Colour</label><label class="color"><input type="color" data-k="bgColor"><span class="hex"></span></label></div>
           <div class="field"><label>Opacity <output data-o="bgOpacity"></output></label><input type="range" data-k="bgOpacity" min="0" max="1" step="0.05"></div>
         </div>
         <div class="field" data-show="bgEnabled"><label>Roundness <output data-o="bgRadius"></output></label><input type="range" data-k="bgRadius" min="0" max="50" step="1"></div>
@@ -165,8 +203,8 @@
         <h4>Behind subject</h4>
         <p class="hint" id="cutout-status"></p>
         <div class="grid2 cut-buttons">
-          <button id="btn-cut-person" class="ghost small" title="Cut out every person, hair and all">👤 Person</button>
-          <button id="btn-cut-object" class="ghost small" title="Then click the thing in the video">⌖ Pick an object</button>
+          <button id="btn-cut-person" class="ghost small" title="Cut out every person, hair and all"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0116 0"/></svg> Person</button>
+          <button id="btn-cut-object" class="ghost small" title="Then click the thing in the video"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg> Pick object</button>
         </div>
         <div id="cutout-progress" class="progress" hidden><div class="bar"><div></div></div><span></span></div>
         <div id="layer-controls" hidden>
@@ -210,51 +248,19 @@
         <p class="hint" id="my-styles-empty">Nothing saved yet. Style a video the way you like, then save it here to reuse it with one click.</p>
         <p class="hint" id="my-styles-help" hidden>Click a style to apply it. ★ = used automatically for every new video.</p>
       </section>
-      <section class="tab-body" data-tab="words" hidden>
-        <h4 class="first">Hinglish spelling</h4>
-        <label class="check"><input type="checkbox" id="dict-texting"> Texting-style spelling</label>
-        <p class="hint">Rewrites the model's formal spellings the way people type: vah → woh, tumhen → tumhe, kuchh → kuch, uske lie → uske liye. <a href="#" id="dict-show-builtin">See all</a></p>
-        <ul id="dict-builtin" class="dict-list builtin" hidden></ul>
-
-        <h4>My words</h4>
-        <p class="hint">Always write a word or phrase your way. Your capitals are kept, so "mac book → MacBook" works.</p>
-        <form id="dict-add" class="dict-add">
-          <input id="dict-from" placeholder="Heard as… kiloertz" required spellcheck="false">
-          <span>→</span>
-          <input id="dict-to" placeholder="Write as… kHz" required spellcheck="false">
-          <button class="primary small">Add</button>
-        </form>
-        <ul id="dict-list" class="dict-list"></ul>
-        <p class="hint">New videos get these fixes automatically. When you correct a word in the Captions tab, you'll be offered to always fix it.</p>
-        <button id="dict-apply" class="ghost wide">Apply to this video's captions</button>
-      </section>
     </aside>
-
-    <section class="stage-wrap">
-      <div id="stage" class="stage">
-        <video id="video" playsinline preload="auto"></video>
-        <video id="matte" class="matte" muted playsinline preload="auto"></video>
-        <canvas id="overlay" title="Click to play/pause · drag a caption to move it"></canvas>
-      </div>
-      <div class="transport">
-        <button id="btn-play" class="ghost icon play" title="Play / pause (Space)">▶</button>
-        <span id="time" class="time">0:00.00 / 0:00.00</span>
-        <button id="btn-hdr-preview" class="ghost small" title="Render a few seconds around the playhead in real HDR" hidden>Preview HDR</button>
-        <span id="hdr-badge" class="hdr-badge" title="HDR video: exported as 10-bit HDR with HDR-correct captions. The preview here is approximate." hidden>HDR</span>
-      </div>
-    </section>
 
     <section class="timeline-wrap">
       <div class="tl-toolbar">
-        <button id="btn-split" class="ghost small" title="Split at playhead (S)">✂ Split</button>
-        <button id="btn-merge" class="ghost small" title="Merge with next caption (M)">⇥ Merge</button>
-        <button id="btn-add" class="ghost small" title="Add caption at playhead (A)">＋ Add</button>
-        <button id="btn-delete" class="ghost small" title="Delete caption (Delete)">🗑 Delete</button>
+        <button id="btn-split" class="tool" title="Split at playhead (S)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.1 15.9M14.5 14.5L20 20M8.1 8.1L12 12"/></svg><span>Split</span></button>
+        <button id="btn-merge" class="tool" title="Merge with next caption (M)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h13m-5-6l6 6-6 6M21 5v14"/></svg><span>Merge</span></button>
+        <button id="btn-add" class="tool" title="Add caption at playhead (A)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>Add</span></button>
+        <button id="btn-delete" class="tool" title="Delete caption (Delete)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M9 7V4h6v3M6 7l1 13h10l1-13"/></svg><span>Delete</span></button>
         <span class="divider"></span>
-        <button id="btn-undo" class="ghost small icon" title="Undo (⌘Z)">↶</button>
-        <button id="btn-redo" class="ghost small icon" title="Redo (⇧⌘Z)">↷</button>
+        <button id="btn-undo" class="tool" title="Undo (⌘Z)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11"/></svg></button>
+        <button id="btn-redo" class="tool" title="Redo (⇧⌘Z)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 14l5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 000 11H13"/></svg></button>
         <div class="spacer"></div>
-        <button id="btn-fit" class="ghost small">Fit</button>
+        <button id="btn-fit" class="tool" title="Fit the whole video"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span>Fit</span></button>
         <input id="zoom" type="range" min="0" max="100" value="40" title="Zoom (⌘ + scroll)">
       </div>
       <div id="timeline" class="timeline"></div>
@@ -300,6 +306,6 @@
   </dialog>
 
   <div id="toast" class="toast" hidden></div>
-  <script type="module" src="js/main.js?v=10"></script>
+  <script type="module" src="js/main.js?v=11"></script>
 </body>
 </html>
