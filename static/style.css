@@ -282,5 +282,6 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
 /* Behind subject: the matte video is only ever read by the canvas, never shown */
 .matte { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 #overlay.picking { cursor: crosshair; }
-#cutout-box .grid2 { margin: 6px 0 4px; }
+.cut-buttons { margin: 6px 0 4px; }
+#layer-controls { margin-top: 8px; }
 #cutout-status.ready { color: var(--text); }

@@ -480,10 +480,12 @@ def hdr_encode_expr(kind, boost):
     return f"pow((0.8359375+18.8515625*{y})/(1+18.6875*{y})\\,78.84375)*maxval"
 
 
-def caption_filter(meta, band, boost, behind=False):
+def caption_filter(meta, band, boost, behind=False, stacked=False):
     """ffmpeg graph: captions ([1:v], a band W×H at y=offset) over the video ([0:v]).
     With `behind`, the subject — the video's own pixels cut out by the matte
-    ([2:v]) — goes back on top, so captions pass behind the person/object."""
+    ([2:v]) — goes back on top, so captions pass behind the person/object.
+    `stacked` images hold two layers (behind on top, front below, each H tall):
+    the front layer goes over the subject."""
     w, h, offset_y = band
     if meta.get("hdr"):
         enc = hdr_encode_expr(meta["hdr"], boost)
@@ -493,21 +495,34 @@ def caption_filter(meta, band, boost, behind=False):
         mix, final = "yuv420p10", "yuv420p10le"
     else:
         caps, mix, final = "[1:v]format=rgba[c]", "auto", "yuv420p"
+    layers = ([f"[c]split[c_back][c_front]", f"[c_back]crop={w}:{h}:0:0[back]", f"[c_front]crop={w}:{h}:0:{h}[front]"]
+              if stacked else ["[c]null[back]"])
+    # The subject strip covers the caption band, snapped to even rows: 4:2:0
+    # video can only be cut on even lines, and the matte must match it exactly.
+    sy = offset_y - offset_y % 2
+    sh = min(offset_y + h - sy + 1, meta["height"] - sy) // 2 * 2
     if not behind:
-        return f"{caps};[0:v][c]overlay=0:{offset_y}:eof_action=repeat:shortest=1:format={mix},format={final}[v]"
+        return ";".join([caps, *layers,
+                         f"[0:v][back]overlay=0:{offset_y}:eof_action=repeat:shortest=1:format={mix}"
+                         + (f"[captioned];[captioned][front]overlay=0:{offset_y}:eof_action=repeat:shortest=1:format={mix}"
+                            if stacked else "")
+                         + f",format={final}[v]"])
     return ";".join([
         caps,
         # split makes both copies share one format; pin it so the alpha the
         # subject needs isn't forced onto (and round-tripped through) the video
         f"[0:v]format={final},split[base][src]",
-        f"[src]crop={w}:{h}:0:{offset_y},format={'yuva420p10le' if meta.get('hdr') else 'yuva420p'}[band]",
+        f"[src]crop={w}:{sh}:0:{sy},format={'yuva420p10le' if meta.get('hdr') else 'yuva420p'}[band]",
         # The matte's values become alpha as-is; relabelling it tv (no conversion)
         # stops its full range from leaking into the video's own colour range.
         f"[2:v]scale={meta['width']}:{meta['height']}:flags=bicubic:in_range=pc:out_range=pc,format=gray,"
-        f"setrange=tv,crop={w}:{h}:0:{offset_y}[matte]",
+        f"setrange=tv,crop={w}:{sh}:0:{sy}[matte]",
         "[band][matte]alphamerge[subject]",
-        f"[base][c]overlay=0:{offset_y}:eof_action=repeat:shortest=1:format={mix}[captioned]",
-        f"[captioned][subject]overlay=0:{offset_y}:eof_action=pass:format={mix},format={final}[v]",
+        *layers,
+        f"[base][back]overlay=0:{offset_y}:eof_action=repeat:shortest=1:format={mix}[captioned]",
+        *([f"[captioned][subject]overlay=0:{sy}:eof_action=pass:format={mix}[layered]",
+           f"[layered][front]overlay=0:{offset_y}:eof_action=repeat:shortest=1:format={mix},format={final}[v]"]
+          if stacked else [f"[captioned][subject]overlay=0:{sy}:eof_action=pass:format={mix},format={final}[v]"]),
     ])
 
 
@@ -545,8 +560,10 @@ def run_export(pid, manifest, out_dir):
         # Frames cover only the horizontal band captions can reach (offsetY..offsetY+H).
         W, H = manifest["width"], manifest["height"]
         offset_y = int(manifest.get("offsetY", 0))
+        behind = bool(manifest.get("behind")) and matte_file(pid).exists()
+        stacked = bool(manifest.get("stacked"))  # images hold two layers, each H tall
         from PIL import Image
-        Image.new("RGBA", (W, H), (0, 0, 0, 0)).save(out_dir / "blank.png")
+        Image.new("RGBA", (W, H * (2 if stacked else 1)), (0, 0, 0, 0)).save(out_dir / "blank.png")
 
         # ffconcat timeline: blank gaps + caption frames, each held until the next.
         lines, cursor = ["ffconcat version 1.0"], 0.0
@@ -568,8 +585,7 @@ def run_export(pid, manifest, out_dir):
         if "hdr" not in meta:  # projects made before HDR support
             meta.update(probe(source_file(pid)))
         boost = min(max(float(manifest.get("hdrBoost", 1.0)), 1.0), 3.8)
-        behind = bool(manifest.get("behind")) and matte_file(pid).exists()
-        overlay = caption_filter(meta, (W, H, offset_y), boost, behind)
+        overlay = caption_filter(meta, (W, H, offset_y), boost, behind, stacked)
         out = out_dir / "output.mp4"
 
         def ffmpeg(audio_args):

@@ -163,15 +163,23 @@
         <div class="field" data-show="bgEnabled"><label>Roundness <output data-o="bgRadius"></output></label><input type="range" data-k="bgRadius" min="0" max="50" step="1"></div>
 
         <h4>Behind subject</h4>
-        <label class="check"><input type="checkbox" data-k="behindSubject"> Captions pass behind the person or object</label>
-        <div id="cutout-box" data-show="behindSubject">
-          <p class="hint" id="cutout-status"></p>
+        <p class="hint" id="cutout-status"></p>
+        <div class="grid2 cut-buttons">
+          <button id="btn-cut-person" class="ghost small" title="Cut out every person, hair and all">👤 Person</button>
+          <button id="btn-cut-object" class="ghost small" title="Then click the thing in the video">⌖ Pick an object</button>
+        </div>
+        <div id="cutout-progress" class="progress" hidden><div class="bar"><div></div></div><span></span></div>
+        <div id="layer-controls" hidden>
           <div class="grid2">
-            <button id="btn-cut-person" class="ghost small" title="Cut out every person, hair and all">👤 Person</button>
-            <button id="btn-cut-object" class="ghost small" title="Then click the thing in the video">⌖ Pick an object</button>
+            <div class="field"><label>Words</label>
+              <div class="seg" data-k="wordsLayer"><button data-v="front">In front</button><button data-v="behind">Behind</button></div>
+            </div>
+            <div class="field" data-show="emphasis=auto"><label>Accent words</label>
+              <div class="seg" data-k="accentLayer"><button data-v="front">In front</button><button data-v="behind">Behind</button></div>
+            </div>
           </div>
-          <div id="cutout-progress" class="progress" hidden><div class="bar"><div></div></div><span></span></div>
-          <button id="btn-cut-remove" class="ghost small" hidden>Remove cut-out</button>
+          <p class="hint">Classic magazine look: accent word behind you, the rest in front. The background box goes with the words.</p>
+          <button id="btn-cut-remove" class="ghost small">Remove cut-out</button>
         </div>
 
         <h4>Layout &amp; motion</h4>

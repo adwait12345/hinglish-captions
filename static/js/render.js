@@ -30,7 +30,8 @@ export const DEFAULT_STYLE = {
   bgEnabled: false, bgColor: '#000000', bgOpacity: 0.55, bgRadius: 25,
   animation: 'pop',     // none | pop | fade | rise
   hdrBoost: 1,          // HDR videos: caption white relative to the broadcast graphics level
-  behindSubject: false, // captions pass behind the cut-out person/object (needs a cut-out)
+  wordsLayer: 'front',  // with a cut-out: normal words 'front' of the person/object or 'behind' it
+  accentLayer: 'front', // ...and accent words, separately
 };
 
 const clean = { highlightMode: 'none', activeScale: 1, strokeWidth: 0, bgEnabled: false, display: 'full', emphasis: 'off', layout: 'flow' };
@@ -83,18 +84,34 @@ export const ANIMATIONS = {
 };
 const WORD_IN = 0.3; // per-word fade when words appear as they're said
 
-// Older projects saved `uppercase: true/false`.
+// Older styles saved `uppercase: true/false`, and `behindSubject` for all words.
 export function normalizeStyle(s = {}) {
   const out = { ...DEFAULT_STYLE, ...s };
   if (s.uppercase !== undefined && s.textCase === undefined) out.textCase = s.uppercase ? 'upper' : 'none';
+  if (s.behindSubject !== undefined && s.wordsLayer === undefined) {
+    out.wordsLayer = out.accentLayer = s.behindSubject ? 'behind' : 'front';
+  }
   delete out.uppercase;
+  delete out.behindSubject;
   return out;
+}
+
+// Which word groups go behind the cut-out and which stay in front of it.
+// 'base' = normal words (and the background box), 'accent' = accent words.
+export function captionLayers(style) {
+  const groups = style.emphasis !== 'off' ? ['base', 'accent'] : ['base'];
+  const side = (g) => (g === 'accent' ? style.accentLayer : style.wordsLayer);
+  return {
+    behind: new Set(groups.filter((g) => side(g) === 'behind')),
+    front: new Set(groups.filter((g) => side(g) !== 'behind')),
+  };
 }
 
 export function presetStyle(name, current) {
   // Presets restyle the text but keep where you've placed it.
   const { sample, group, ...preset } = PRESETS[name];
-  return { ...DEFAULT_STYLE, positionY: current.positionY, maxWidth: current.maxWidth, ...preset };
+  const keep = ['positionY', 'maxWidth', 'wordsLayer', 'accentLayer'];
+  return { ...DEFAULT_STYLE, ...Object.fromEntries(keep.map((k) => [k, current[k]])), ...preset };
 }
 
 export function fontPx(style, W, H) {
@@ -257,7 +274,9 @@ function captionAnim(style, cap, t, px) {
 }
 
 // Draw one caption as it looks at time t, into a W×H video-sized coordinate space.
-export function drawCaption(ctx, W, H, cap, t, style) {
+// `only` (a Set of 'base' / 'accent') draws just those words, for layering
+// around a cut-out; the rest keep their places, so the layers line up exactly.
+export function drawCaption(ctx, W, H, cap, t, style, only = null) {
   if (!cap || !cap.words.length) return;
   const px = fontPx(style, W, H);
   const active = activeWordIndex(cap, t);
@@ -278,7 +297,7 @@ export function drawCaption(ctx, W, H, cap, t, style) {
     ctx.translate(-W / 2, -cy);
   }
 
-  if (style.bgEnabled) {
+  if (style.bgEnabled && (!only || only.has('base'))) {
     const padX = px * 0.45, padY = px * 0.22;
     ctx.fillStyle = rgba(style.bgColor, style.bgOpacity);
     roundRect(ctx, W / 2 - L.width / 2 - padX, top - padY, L.width + padX * 2, L.height + padY * 2, (style.bgRadius / 100) * px * style.lineHeight);
@@ -294,7 +313,7 @@ export function drawCaption(ctx, W, H, cap, t, style) {
     const x0 = W / 2 - line.width / 2;
     const base = top + line.baseline;
     for (const item of line.items) {
-      if (item.i > shown) continue;
+      if (item.i > shown || (only && !only.has(item.em ? 'accent' : 'base'))) continue;
       const rs = item.rs;
       const isActive = item.i === active && style.highlightMode !== 'none';
       const cx = x0 + item.x + item.width / 2;

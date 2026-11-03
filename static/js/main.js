@@ -1,4 +1,4 @@
-import { DEFAULT_STYLE, PRESETS, captionAt, captionBand, captionBox, drawCaption, exportStates, normalizeStyle, presetStyle } from './render.js?v=10';
+import { DEFAULT_STYLE, PRESETS, captionAt, captionBand, captionBox, captionLayers, drawCaption, exportStates, normalizeStyle, presetStyle } from './render.js?v=10';
 import { fontInfo, getFonts, loadFont, nearestWeight } from './fonts.js?v=10';
 import { Timeline, fmtTime } from './timeline.js?v=10';
 
@@ -539,8 +539,13 @@ function draw() {
   ctx.clearRect(0, 0, W, H);
   const t = app.time;
   const cap = captionAt(app.captions, t);
-  drawCaption(ctx, W, H, cap, t, app.style);
-  if (cap && app.style.behindSubject) cutCaptionsBehindSubject(ctx, W, H, cap);
+  const layers = cutoutLayers();
+  if (cap && layers && matte.readyState >= 2) {
+    // behind-layer → cut the subject out of it → front-layer on top
+    drawCaption(ctx, W, H, cap, t, app.style, layers.behind);
+    cutCaptionsBehindSubject(ctx, W, H, cap);
+    if (layers.front.size) drawCaption(ctx, W, H, cap, t, app.style, layers.front);
+  } else drawCaption(ctx, W, H, cap, t, app.style);
 
   $('#time').textContent = `${fmtTime(t)} / ${fmtTime(app.duration)}`;
   timeline.setTime(t);
@@ -614,6 +619,14 @@ function hitCaption(e) {
 app.cutout = null;
 let cuttingFor = null;
 
+// The word groups to put behind / in front of the cut-out, or null when
+// nothing goes behind (or there's no cut-out yet).
+function cutoutLayers() {
+  if (!app.cutout) return null;
+  const layers = captionLayers(app.style);
+  return layers.behind.size ? layers : null;
+}
+
 function loadMatte(cutout) {
   app.cutout = cutout || null;
   if (cutout) matte.src = `/api/projects/${app.project.id}/matte.mp4?v=${cutout.version}`;
@@ -637,7 +650,6 @@ function syncMatte(force = false) {
 
 const cutCanvas = document.createElement('canvas');
 function cutCaptionsBehindSubject(ctx, W, H, cap) {
-  if (!app.cutout || matte.readyState < 2) return;
   if (app.playing) syncMatte();
   // Only the rows the caption (plus its glow) covers.
   const b = captionBox(ctx, W, H, cap, app.style);
@@ -665,10 +677,10 @@ function updateCutoutUI() {
   const st = $('#cutout-status');
   const what = { person: 'Person', object: 'the object you picked' }[app.cutout?.mode];
   st.textContent = app.cutout
-    ? `✓ Cut-out ready: ${what}. Captions go behind it in the preview and the export.`
-    : 'Choose what stays in front of the captions. It\'s worked out on your Mac (about 3 s per second of video).';
+    ? `✓ Cut-out ready: ${what}. Choose which words go behind it.`
+    : 'Put captions behind a person or object. It\'s worked out once on your Mac (about 3–4 s per second of video); then edit freely.';
   st.classList.toggle('ready', !!app.cutout);
-  $('#btn-cut-remove').hidden = !app.cutout;
+  $('#layer-controls').hidden = !app.cutout;
 }
 
 async function startCutout(body) {
@@ -693,7 +705,12 @@ async function trackCutout(pid) {
     }, 'cutout');
     if (app.project?.id !== pid) return;
     loadMatte(s.cutout);
-    if (!app.style.behindSubject) { app.style.behindSubject = true; syncStyleControls(); app.commit(); }
+    if (!cutoutLayers()) {
+      // Start from the classic look: accent word behind, everything else in front.
+      if (app.style.emphasis !== 'off') app.style.accentLayer = 'behind'; else app.style.wordsLayer = 'behind';
+      syncStyleControls();
+      app.commit();
+    }
     toast('Cut-out ready. Captions now pass behind it.');
   } catch (e) {
     toast(e.message, 6000);
@@ -1127,7 +1144,11 @@ async function renderVideo({ target, clip = null, isCancelled, onProgress }) {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   const band = captionBand(ctx, W, H, app.captions, app.style);
-  canvas.width = W; canvas.height = band.height;
+  // With words both behind and in front of a cut-out, each image holds two
+  // layers stacked: behind on top, front below; the server splits them.
+  const layers = cutoutLayers();
+  const stacked = !!(layers && layers.front.size);
+  canvas.width = W; canvas.height = band.height * (stacked ? 2 : 1);
   // Small batches, so only a few images are ever held in memory at once
   // (long or 4K videos can have thousands).
   const BATCH = 40;
@@ -1145,9 +1166,13 @@ async function renderVideo({ target, clip = null, isCancelled, onProgress }) {
     if (isCancelled()) return false;
     const s = states[i];
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, W, band.height);
+    ctx.clearRect(0, 0, W, canvas.height);
     ctx.translate(0, -band.top);
-    drawCaption(ctx, W, H, s.cap, s.t, app.style);
+    drawCaption(ctx, W, H, s.cap, s.t, app.style, layers?.behind);
+    if (stacked) {
+      ctx.translate(0, band.height);
+      drawCaption(ctx, W, H, s.cap, s.t, app.style, layers.front);
+    }
     const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'));
     const name = `f${String(i).padStart(6, '0')}.png`;
     batch.append('frames', blob, name);
@@ -1161,7 +1186,7 @@ async function renderVideo({ target, clip = null, isCancelled, onProgress }) {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       width: W, height: band.height, offsetY: band.top, frames, hdrBoost: app.style.hdrBoost,
-      behind: !!(app.style.behindSubject && app.cutout), ...(clip || {}),
+      behind: !!layers, stacked, ...(clip || {}),
     }),
   });
   await poll(pid, (st) => onProgress(st.stage || 'Rendering…', 0.4 + (st.progress || 0) * 0.6));
