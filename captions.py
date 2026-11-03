@@ -8,6 +8,7 @@ pin every word to the exact moment it is spoken.
 
 import gc
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -292,6 +293,65 @@ CLOSE_GAP = 0.5  # gaps shorter than this are closed up to avoid flicker
 MIN_DURATION = 0.5  # nobody can read a caption that flashes by faster
 MIN_READABLE = 0.3  # spoken faster than this? merge with a neighbour
 LINGER = 0.2  # keep the last words up briefly after they're spoken
+HOLD_TOGETHER = 1.0  # a pause shorter than this won't split a word from its helper
+
+# Hindi helpers lean on the word before them ("pata hai", "tere baare mein",
+# "kar raha tha"), so a caption should never start with one.
+LEANS_BACK = set("""
+hai hain he h hu hoon hun ho hoga hogi honge tha thi thhe raha rahi rahe rha rhi rhe
+gaya gayi gaye gya gyi gye diya diye liya liye sakta sakti sakte skta chuka chuki chuke
+ka ki ke ko se me mein pe par tak wala wali wale waala waali waale ne bhi hi na
+ga gi ge jaata jaati jaate
+""".split())
+# ...and these lead into the word after them, so a caption shouldn't end on one.
+LEANS_FORWARD = set("""
+a an the to of in on at for with from and or but my your his her its our their
+this these those will would can could should must
+aur ya lekin magar agar jab jo kyunki kyuki mera meri mere tera teri tere
+uska uski uske unka unki unke apna apni apne hamara hamari hamare ek bahut bohot
+itna itni itne kitna kitni kitne sabse
+""".split())
+
+
+def _bare(word):
+    return re.sub(r"[^\w']", "", word.lower())
+
+
+def _break_cost(prev, word):
+    """How bad it is to end a caption after `prev` and start the next at `word`."""
+    cost = 0.0
+    if _bare(word[2]) in LEANS_BACK:
+        cost += 12
+    if _bare(prev[2]) in LEANS_FORWARD:
+        cost += 8
+    if prev[2].rstrip("*")[-1:] in ",;:":
+        cost -= 3
+    return cost - 10 * min(max(word[0] - prev[1], 0.0), 0.4)  # pauses are natural breaks
+
+
+def _split_phrase(ph, max_words):
+    """Cut a phrase into captions at the most natural points, keeping each
+    within max_words / MAX_CHARS_PER_CAPTION and roughly even in size."""
+    n_min = -(-len(ph) // max_words)
+    ideal = len(ph) / n_min
+    best = [(0.0, 0)] + [(float("inf"), 0)] * len(ph)  # (cost, start of last group)
+    for j in range(1, len(ph) + 1):
+        for i in range(max(0, j - max_words), j):
+            if j - i > 1 and len(" ".join(w[2] for w in ph[i:j])) > MAX_CHARS_PER_CAPTION:
+                continue
+            cost = best[i][0] + 10 + (j - i - ideal) ** 2
+            if i:
+                cost += _break_cost(ph[i - 1], ph[i])
+            if j - i == 1 and len(ph) > 1:
+                cost += 4  # a lonely word
+            if cost < best[j][0]:
+                best[j] = (cost, i)
+    groups, j = [], len(ph)
+    while j:
+        i = best[j][1]
+        groups.insert(0, ph[i:j])
+        j = i
+    return groups
 
 
 def build_captions(words, max_words=DEFAULT_WORDS_PER_CAPTION):
@@ -303,26 +363,23 @@ def caption_groups(words, max_words=DEFAULT_WORDS_PER_CAPTION):
     """[(start, end, [word, ...])] captions, keeping each word's own timing."""
     max_words = int(max_words)
 
-    # 1. Phrases: break on real pauses and at the end of sentences.
+    # 1. Phrases: break on real pauses and at the end of sentences, but a
+    #    short pause before "hai"/"tha"/"mein"… doesn't cut it off its phrase.
     phrases, cur = [], []
     for i, w in enumerate(words):
-        if cur and (w[0] - cur[-1][1] >= PAUSE_BREAK or cur[-1][2][-1] in ".?!"):
+        gap = w[0] - cur[-1][1] if cur else 0
+        leans = _bare(w[2]) in LEANS_BACK and gap < HOLD_TOGETHER
+        if cur and ((gap >= PAUSE_BREAK and not leans) or cur[-1][2].rstrip("*")[-1:] in ".?!"):
             phrases.append(cur)
             cur = []
         cur.append(w)
     if cur:
         phrases.append(cur)
 
-    # 2. Split each phrase into evenly sized captions (no lonely last word).
+    # 2. Split each phrase into captions at natural points (no lonely words).
     caps = []
     for ph in phrases:
-        n = -(-len(ph) // max_words)
-        while True:
-            bounds = [round(i * len(ph) / n) for i in range(n + 1)]
-            groups = [ph[a:b] for a, b in zip(bounds, bounds[1:])]
-            if n >= len(ph) or all(len(" ".join(x[2] for x in g)) <= MAX_CHARS_PER_CAPTION for g in groups):
-                break
-            n += 1
+        groups = _split_phrase(ph, max_words)
         # Words said too quickly to read get merged into a neighbouring caption.
         while len(groups) > 1:
             dur = [g[-1][1] - g[0][0] for g in groups]
