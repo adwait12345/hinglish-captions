@@ -1,6 +1,6 @@
 // Font list (Google Fonts + fonts installed on this computer) and loading.
 
-import { accentFont, baseFont, fontCss } from './render.js?v=9';
+import { accentFont, baseFont, fontCss } from './render.js?v=10';
 
 let fontsPromise = null;
 const googleLinks = new Map(); // family -> promise of its stylesheet loading

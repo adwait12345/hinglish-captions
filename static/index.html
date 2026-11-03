@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hinglish Captions</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%237c5cff'/><rect x='6' y='19' width='20' height='5' rx='2' fill='white'/><rect x='9' y='11' width='14' height='5' rx='2' fill='%23ffe600'/></svg>">
-  <link rel="stylesheet" href="style.css?v=9">
+  <link rel="stylesheet" href="style.css?v=10">
 </head>
 <body>
   <!-- Home: upload + recent projects -->
@@ -162,6 +162,18 @@
         </div>
         <div class="field" data-show="bgEnabled"><label>Roundness <output data-o="bgRadius"></output></label><input type="range" data-k="bgRadius" min="0" max="50" step="1"></div>
 
+        <h4>Behind subject</h4>
+        <label class="check"><input type="checkbox" data-k="behindSubject"> Captions pass behind the person or object</label>
+        <div id="cutout-box" data-show="behindSubject">
+          <p class="hint" id="cutout-status"></p>
+          <div class="grid2">
+            <button id="btn-cut-person" class="ghost small" title="Cut out every person, hair and all">👤 Person</button>
+            <button id="btn-cut-object" class="ghost small" title="Then click the thing in the video">⌖ Pick an object</button>
+          </div>
+          <div id="cutout-progress" class="progress" hidden><div class="bar"><div></div></div><span></span></div>
+          <button id="btn-cut-remove" class="ghost small" hidden>Remove cut-out</button>
+        </div>
+
         <h4>Layout &amp; motion</h4>
         <div class="field"><label>Vertical position <output data-o="positionY"></output></label><input type="range" data-k="positionY" min="5" max="95" step="0.5"></div>
         <div class="grid2">
@@ -213,6 +225,7 @@
     <section class="stage-wrap">
       <div id="stage" class="stage">
         <video id="video" playsinline preload="auto"></video>
+        <video id="matte" class="matte" muted playsinline preload="auto"></video>
         <canvas id="overlay" title="Click to play/pause · drag a caption to move it"></canvas>
       </div>
       <div class="transport">
@@ -279,6 +292,6 @@
   </dialog>
 
   <div id="toast" class="toast" hidden></div>
-  <script type="module" src="js/main.js?v=9"></script>
+  <script type="module" src="js/main.js?v=10"></script>
 </body>
 </html>

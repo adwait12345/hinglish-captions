@@ -30,6 +30,7 @@ export const DEFAULT_STYLE = {
   bgEnabled: false, bgColor: '#000000', bgOpacity: 0.55, bgRadius: 25,
   animation: 'pop',     // none | pop | fade | rise
   hdrBoost: 1,          // HDR videos: caption white relative to the broadcast graphics level
+  behindSubject: false, // captions pass behind the cut-out person/object (needs a cut-out)
 };
 
 const clean = { highlightMode: 'none', activeScale: 1, strokeWidth: 0, bgEnabled: false, display: 'full', emphasis: 'off', layout: 'flow' };

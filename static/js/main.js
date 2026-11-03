@@ -1,6 +1,6 @@
-import { DEFAULT_STYLE, PRESETS, captionAt, captionBand, captionBox, drawCaption, exportStates, normalizeStyle, presetStyle } from './render.js?v=9';
-import { fontInfo, getFonts, loadFont, nearestWeight } from './fonts.js?v=9';
-import { Timeline, fmtTime } from './timeline.js?v=9';
+import { DEFAULT_STYLE, PRESETS, captionAt, captionBand, captionBox, drawCaption, exportStates, normalizeStyle, presetStyle } from './render.js?v=10';
+import { fontInfo, getFonts, loadFont, nearestWeight } from './fonts.js?v=10';
+import { Timeline, fmtTime } from './timeline.js?v=10';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -64,9 +64,9 @@ function xhrUpload(url, body, onProgress) {
   });
 }
 
-async function poll(pid, onUpdate) {
+async function poll(pid, onUpdate, kind = '') {
   for (;;) {
-    const s = await api.json(`/api/projects/${pid}/status`);
+    const s = await api.json(`/api/projects/${pid}/status${kind ? `?kind=${kind}` : ''}`);
     onUpdate(s);
     if (s.state === 'done') return s;
     if (s.state === 'error') throw new Error(s.error || 'Something went wrong');
@@ -154,6 +154,7 @@ const app = {
 };
 
 const video = $('#video');
+const matte = $('#matte'); // the cut-out (white = subject), played in step with the video
 const overlay = $('#overlay');
 const timeline = new Timeline($('#timeline'), app);
 
@@ -232,6 +233,7 @@ async function openProject(pid) {
   $('#project-name').value = p.name;
   $('#hdr-field').hidden = $('#hdr-badge').hidden = $('#btn-hdr-preview').hidden = !p.meta.hdr;
   video.src = `/api/projects/${pid}/video`;
+  loadMatte(p.cutout);
   await new Promise((r) => { video.onloadedmetadata = r; video.onerror = r; });
   fitStage();
   syncStyleControls();
@@ -244,6 +246,8 @@ async function openProject(pid) {
   timeline.fitToView();
   showCaptionsUI();
   if (!p.captions && pollingFor !== pid) maybeResumeJob(pid);
+  const cut = await api.json(`/api/projects/${pid}/status?kind=cutout`).catch(() => null);
+  if (cut?.state === 'running' && cuttingFor !== pid) trackCutout(pid);
 }
 
 // ---------------------------------------------------------------------------
@@ -536,6 +540,7 @@ function draw() {
   const t = app.time;
   const cap = captionAt(app.captions, t);
   drawCaption(ctx, W, H, cap, t, app.style);
+  if (cap && app.style.behindSubject) cutCaptionsBehindSubject(ctx, W, H, cap);
 
   $('#time').textContent = `${fmtTime(t)} / ${fmtTime(app.duration)}`;
   timeline.setTime(t);
@@ -557,9 +562,9 @@ function togglePlay() {
   if (!app.project) return;
   if (app.playing) video.pause(); else video.play();
 }
-video.addEventListener('play', () => { $('#btn-play').textContent = '❚❚'; requestDraw(); });
-video.addEventListener('pause', () => { $('#btn-play').textContent = '▶'; requestDraw(); });
-video.addEventListener('seeked', requestDraw);
+video.addEventListener('play', () => { $('#btn-play').textContent = '❚❚'; syncMatte(true); requestDraw(); });
+video.addEventListener('pause', () => { $('#btn-play').textContent = '▶'; syncMatte(true); requestDraw(); });
+video.addEventListener('seeked', () => { syncMatte(true); requestDraw(); });
 $('#btn-play').onclick = togglePlay;
 
 // Click the video to play/pause; drag the caption itself to move it up or down.
@@ -568,6 +573,7 @@ overlay.addEventListener('pointermove', (e) => {
   overlay.classList.toggle('grab', hitCaption(e));
 });
 overlay.addEventListener('pointerdown', (e) => {
+  if (overlay.classList.contains('picking')) return pickObject(e);
   if (!hitCaption(e)) return togglePlay();
   e.preventDefault();
   overlay.setPointerCapture(e.pointerId);
@@ -598,6 +604,129 @@ function hitCaption(e) {
   const pad = Math.min(W, H) * 0.03;
   return x > b.left - pad && x < b.right + pad && y > b.top - pad && y < b.bottom + pad;
 }
+
+// ---------------------------------------------------------------------------
+// Behind subject: a matte video from the server (white = person/object). The
+// preview erases caption pixels wherever the matte is white, so the real video
+// (HDR and all) shows through; the export pastes the subject back on top.
+// ---------------------------------------------------------------------------
+
+app.cutout = null;
+let cuttingFor = null;
+
+function loadMatte(cutout) {
+  app.cutout = cutout || null;
+  if (cutout) matte.src = `/api/projects/${app.project.id}/matte.mp4?v=${cutout.version}`;
+  else matte.removeAttribute('src');
+  matte.load();
+  updateCutoutUI();
+  requestDraw();
+}
+matte.addEventListener('loadeddata', () => { syncMatte(true); requestDraw(); });
+matte.addEventListener('seeked', requestDraw);
+
+// Keep the matte on the video's frame: follow play/pause/seek, and jump back
+// in step if it ever drifts by more than a couple of frames while playing.
+function syncMatte(force = false) {
+  if (!app.cutout || matte.readyState < 1 || (matte.seeking && !force)) return;
+  const drift = Math.abs(matte.currentTime - video.currentTime);
+  if (force || drift > 0.08) matte.currentTime = video.currentTime;
+  if (app.playing && matte.paused) matte.play().catch(() => {});
+  if (!app.playing && !matte.paused) matte.pause();
+}
+
+const cutCanvas = document.createElement('canvas');
+function cutCaptionsBehindSubject(ctx, W, H, cap) {
+  if (!app.cutout || matte.readyState < 2) return;
+  if (app.playing) syncMatte();
+  // Only the rows the caption (plus its glow) covers.
+  const b = captionBox(ctx, W, H, cap, app.style);
+  const pad = Math.min(W, H) * 0.06 + (app.style.shadowBlur || 0) * 2;
+  const top = Math.max(0, b.top - pad), bottom = Math.min(H, b.bottom + pad);
+  if (bottom <= top) return;
+  const k = overlay.height / H;
+  const y = Math.floor(top * k), h = Math.ceil((bottom - top) * k), w = overlay.width;
+  cutCanvas.width = w; cutCanvas.height = h;
+  const c = cutCanvas.getContext('2d', { willReadFrequently: true });
+  const mk = matte.videoHeight / H;
+  c.drawImage(matte, 0, top * mk, matte.videoWidth, (bottom - top) * mk, 0, 0, w, h);
+  const img = c.getImageData(0, 0, w, h);
+  const px = img.data;
+  for (let i = 0; i < px.length; i += 4) px[i + 3] = px[i]; // brightness → see-through
+  c.putImageData(img, 0, 0);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.drawImage(cutCanvas, 0, y);
+  ctx.restore();
+}
+
+function updateCutoutUI() {
+  const st = $('#cutout-status');
+  const what = { person: 'Person', object: 'the object you picked' }[app.cutout?.mode];
+  st.textContent = app.cutout
+    ? `✓ Cut-out ready: ${what}. Captions go behind it in the preview and the export.`
+    : 'Choose what stays in front of the captions. It\'s worked out on your Mac (about 3 s per second of video).';
+  st.classList.toggle('ready', !!app.cutout);
+  $('#btn-cut-remove').hidden = !app.cutout;
+}
+
+async function startCutout(body) {
+  const pid = app.project.id;
+  try {
+    await api.json(`/api/projects/${pid}/cutout`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    trackCutout(pid);
+  } catch (e) { toast(e.message, 5000); }
+}
+
+async function trackCutout(pid) {
+  cuttingFor = pid;
+  const box = $('#cutout-progress');
+  box.hidden = false;
+  $('#btn-cut-person').disabled = $('#btn-cut-object').disabled = true;
+  try {
+    const s = await poll(pid, (st) => {
+      $('.bar > div', box).style.width = `${(st.progress || 0) * 100}%`;
+      $('span', box).textContent = st.stage || '';
+    }, 'cutout');
+    if (app.project?.id !== pid) return;
+    loadMatte(s.cutout);
+    if (!app.style.behindSubject) { app.style.behindSubject = true; syncStyleControls(); app.commit(); }
+    toast('Cut-out ready. Captions now pass behind it.');
+  } catch (e) {
+    toast(e.message, 6000);
+  } finally {
+    cuttingFor = null;
+    box.hidden = true;
+    $('#btn-cut-person').disabled = $('#btn-cut-object').disabled = false;
+  }
+}
+
+$('#btn-cut-person').onclick = () => startCutout({ mode: 'person' });
+
+$('#btn-cut-object').onclick = () => {
+  video.pause();
+  overlay.classList.add('picking');
+  toast('Click the person or object that should stay in front of the captions. Esc to cancel.', 6000);
+};
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && overlay.classList.contains('picking')) overlay.classList.remove('picking');
+});
+
+function pickObject(e) {
+  e.preventDefault();
+  overlay.classList.remove('picking');
+  const r = overlay.getBoundingClientRect();
+  startCutout({ mode: 'object', t: app.time, x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height });
+}
+
+$('#btn-cut-remove').onclick = async () => {
+  if (!await ask('Remove the cut-out? Captions will sit on top of everything again.', 'Remove')) return;
+  await api.json(`/api/projects/${app.project.id}/cutout`, { method: 'DELETE' });
+  loadMatte(null);
+};
 
 // ---------------------------------------------------------------------------
 // Style panel
@@ -1030,7 +1159,10 @@ async function renderVideo({ target, clip = null, isCancelled, onProgress }) {
   await flush();
   await api.json(`/api/projects/${pid}/export/render${q}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ width: W, height: band.height, offsetY: band.top, frames, hdrBoost: app.style.hdrBoost, ...(clip || {}) }),
+    body: JSON.stringify({
+      width: W, height: band.height, offsetY: band.top, frames, hdrBoost: app.style.hdrBoost,
+      behind: !!(app.style.behindSubject && app.cutout), ...(clip || {}),
+    }),
   });
   await poll(pid, (st) => onProgress(st.stage || 'Rendering…', 0.4 + (st.progress || 0) * 0.6));
   return true;

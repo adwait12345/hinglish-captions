@@ -315,8 +315,75 @@ def start_transcribe(pid: str, max_words: int = Form(4)):
 
 
 @app.get("/api/projects/{pid}/status")
-def job_status(pid: str):
-    return jobs.get(pid, {"state": "idle"})
+def job_status(pid: str, kind: str = ""):
+    return jobs.get(f"{pid}:{kind}" if kind else pid, {"state": "idle"})
+
+
+# ---------------------------------------------------------------------------
+# Captions behind the subject: a matte video (white = person/object), made
+# with macOS Vision; the preview and the export draw the subject over captions.
+# ---------------------------------------------------------------------------
+
+def matte_file(pid):
+    return pdir(pid) / "matte.mp4"
+
+
+def run_cutout(pid, mode, click):
+    import cutout
+
+    key = f"{pid}:cutout"
+    job = jobs[key]
+    tmp = pdir(pid) / "matte.part.mp4"
+    try:
+        p = load_project(pid)
+        stage = "Finding you in every frame…" if mode == "person" else "Following the object through the video…"
+        job.update(stage=stage, progress=0.01)
+        cutout.make_matte(source_file(pid), tmp, p["meta"], mode, click, lambda f: job.update(progress=f))
+        tmp.replace(matte_file(pid))
+        p = load_project(pid)  # re-read: captions may have been edited meanwhile
+        p["cutout"] = {"mode": mode, "click": click, "version": int(time.time())}
+        save_project(p)
+        job.update(state="done", stage="Done", progress=1.0, cutout=p["cutout"])
+    except Exception as e:
+        tmp.unlink(missing_ok=True)
+        job.update(state="error", error=str(e))
+
+
+@app.post("/api/projects/{pid}/cutout")
+async def start_cutout(pid: str, request: Request):
+    pdir(pid)
+    body = await request.json()
+    mode = body.get("mode")
+    if mode not in ("person", "object"):
+        raise HTTPException(400, "Choose Person or an object.")
+    click = None
+    if mode == "object":
+        try:
+            click = {k: float(body[k]) for k in ("t", "x", "y")}
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(400, "Click on the object you want in front of the captions.")
+    key = f"{pid}:cutout"
+    if jobs.get(key, {}).get("state") == "running":
+        return jobs[key]
+    jobs[key] = {"kind": "cutout", "state": "running", "stage": "Starting…", "progress": 0}
+    threading.Thread(target=run_cutout, args=(pid, mode, click), daemon=True).start()
+    return jobs[key]
+
+
+@app.get("/api/projects/{pid}/matte.mp4")
+def get_matte(pid: str):
+    if not matte_file(pid).exists():
+        raise HTTPException(404, "No cut-out yet.")
+    return FileResponse(matte_file(pid), media_type="video/mp4")
+
+
+@app.delete("/api/projects/{pid}/cutout")
+def delete_cutout(pid: str):
+    matte_file(pid).unlink(missing_ok=True)
+    p = load_project(pid)
+    p.pop("cutout", None)
+    save_project(p)
+    return {"ok": True}
 
 
 @app.post("/api/projects/{pid}/regroup")
@@ -413,15 +480,35 @@ def hdr_encode_expr(kind, boost):
     return f"pow((0.8359375+18.8515625*{y})/(1+18.6875*{y})\\,78.84375)*maxval"
 
 
-def caption_filter(meta, offset_y, boost):
-    out = f"overlay=0:{offset_y}:eof_action=repeat:shortest=1"
-    if not meta.get("hdr"):
-        return f"[1:v]format=rgba[c];[0:v][c]{out}:format=auto,format=yuv420p[v]"
-    enc = hdr_encode_expr(meta["hdr"], boost)
-    return (f"[1:v]format=rgba64le,lutrgb=r='{SRGB_TO_LINEAR}':g='{SRGB_TO_LINEAR}':b='{SRGB_TO_LINEAR}',"
-            f"colorchannelmixer={BT709_TO_BT2020},lutrgb=r='{enc}':g='{enc}':b='{enc}',"
-            f"scale=out_color_matrix=bt2020:out_range=tv,format=yuva444p10le[c];"
-            f"[0:v][c]{out}:format=yuv420p10,format=yuv420p10le[v]")
+def caption_filter(meta, band, boost, behind=False):
+    """ffmpeg graph: captions ([1:v], a band W×H at y=offset) over the video ([0:v]).
+    With `behind`, the subject — the video's own pixels cut out by the matte
+    ([2:v]) — goes back on top, so captions pass behind the person/object."""
+    w, h, offset_y = band
+    if meta.get("hdr"):
+        enc = hdr_encode_expr(meta["hdr"], boost)
+        caps = (f"[1:v]format=rgba64le,lutrgb=r='{SRGB_TO_LINEAR}':g='{SRGB_TO_LINEAR}':b='{SRGB_TO_LINEAR}',"
+                f"colorchannelmixer={BT709_TO_BT2020},lutrgb=r='{enc}':g='{enc}':b='{enc}',"
+                f"scale=out_color_matrix=bt2020:out_range=tv,format=yuva444p10le[c]")
+        mix, final = "yuv420p10", "yuv420p10le"
+    else:
+        caps, mix, final = "[1:v]format=rgba[c]", "auto", "yuv420p"
+    if not behind:
+        return f"{caps};[0:v][c]overlay=0:{offset_y}:eof_action=repeat:shortest=1:format={mix},format={final}[v]"
+    return ";".join([
+        caps,
+        # split makes both copies share one format; pin it so the alpha the
+        # subject needs isn't forced onto (and round-tripped through) the video
+        f"[0:v]format={final},split[base][src]",
+        f"[src]crop={w}:{h}:0:{offset_y},format={'yuva420p10le' if meta.get('hdr') else 'yuva420p'}[band]",
+        # The matte's values become alpha as-is; relabelling it tv (no conversion)
+        # stops its full range from leaking into the video's own colour range.
+        f"[2:v]scale={meta['width']}:{meta['height']}:flags=bicubic:in_range=pc:out_range=pc,format=gray,"
+        f"setrange=tv,crop={w}:{h}:0:{offset_y}[matte]",
+        "[band][matte]alphamerge[subject]",
+        f"[base][c]overlay=0:{offset_y}:eof_action=repeat:shortest=1:format={mix}[captioned]",
+        f"[captioned][subject]overlay=0:{offset_y}:eof_action=pass:format={mix},format={final}[v]",
+    ])
 
 
 _encoders = {}
@@ -481,13 +568,16 @@ def run_export(pid, manifest, out_dir):
         if "hdr" not in meta:  # projects made before HDR support
             meta.update(probe(source_file(pid)))
         boost = min(max(float(manifest.get("hdrBoost", 1.0)), 1.0), 3.8)
-        overlay = caption_filter(meta, offset_y, boost)
+        behind = bool(manifest.get("behind")) and matte_file(pid).exists()
+        overlay = caption_filter(meta, (W, H, offset_y), boost, behind)
         out = out_dir / "output.mp4"
 
         def ffmpeg(audio_args):
             cmd = ["ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-progress", "pipe:1",
                    *(["-ss", f"{clip_start:.3f}", "-t", f"{clip_len:.3f}"] if clip_len else []),
                    "-i", str(source_file(pid)), "-f", "concat", "-safe", "0", "-i", str(out_dir / "frames.txt"),
+                   *([*(["-ss", f"{clip_start:.3f}", "-t", f"{clip_len:.3f}"] if clip_len else []),
+                      "-i", str(matte_file(pid))] if behind else []),
                    "-filter_complex", overlay, "-map", "[v]", *audio_map(source_file(pid)),
                    *video_encoder(meta), *audio_args, "-movflags", "+faststart", str(out)]
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

@@ -32,6 +32,7 @@ interesting hai to
 - **Spelling that matches how you type.** Texting-style Hinglish is on by default, so the model's formal spellings become what people actually write: *vah → woh, tumhen → tumhe, kuchh → kuch, uske lie → uske liye, karoonga → karunga*.
 - **Your own dictionary.** Add words or phrases to always fix (*kiloertz → kHz*, *mac book → MacBook*). New videos use it automatically, and **Apply to this video** fixes existing captions (undo-able). When you correct a word in the Captions tab, it offers to always fix it that way.
 - **My styles.** Save your look and reuse it with one click. Star one, and every new video starts in it.
+- **Captions behind you.** Text can pass behind the person, or any object you click, like a magazine cover. **Person** cuts out everyone in the shot, hair and all. **Pick an object** follows whatever you click through the video. It's worked out once per video, on your Mac, with Apple's own Vision framework (the engine behind Portrait mode and "lift subject"). It takes about 3–4 s per second of 4K video, and there's no extra download. After that you can change fonts, text or position freely. The export pastes the original pixels back over the captions, so HDR stays HDR.
 
 ## How it works
 
@@ -76,6 +77,7 @@ The tool is built to stay light on a 16 GB Mac:
 - **Audio** is decoded to a temporary file and read in pieces, not held in RAM.
 - **Models** load one at a time and are freed as soon as captioning finishes. Peak use is about 3.7 GB while transcribing, and about 0.3 GB when idle.
 - **Export** sends caption frames to the server in batches of 40, so even thousands of frames never pile up in memory.
+- **Cut-outs** (captions behind you) are made one frame at a time and written straight to a video file, at about 0.4 GB whatever the length.
 
 ## Tips
 

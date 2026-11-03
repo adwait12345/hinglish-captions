@@ -278,3 +278,9 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
   background: linear-gradient(90deg, #ffb347, #ff5f9e, #7c5cff); color: #fff; }
 .hdr-dlg { width: min(460px, 94vw); }
 .hdr-dlg video { width: 100%; max-height: 62vh; background: #000; border-radius: 10px; display: block; }
+
+/* Behind subject: the matte video is only ever read by the canvas, never shown */
+.matte { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+#overlay.picking { cursor: crosshair; }
+#cutout-box .grid2 { margin: 6px 0 4px; }
+#cutout-status.ready { color: var(--text); }
