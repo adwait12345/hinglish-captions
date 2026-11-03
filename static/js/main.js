@@ -1,6 +1,6 @@
-import { DEFAULT_STYLE, PRESETS, captionAt, captionBand, captionBox, captionLayers, drawCaption, exportStates, normalizeStyle, presetStyle } from './render.js?v=10';
-import { fontInfo, getFonts, loadFont, nearestWeight } from './fonts.js?v=10';
-import { Timeline, fmtTime } from './timeline.js?v=10';
+import { DEFAULT_STYLE, PRESETS, captionAt, captionBand, captionBox, captionLayers, drawCaption, exportStates, gapAfter, normalizeStyle, presetStyle } from './render.js?v=11';
+import { fontInfo, getFonts, loadFont, nearestWeight } from './fonts.js?v=11';
+import { Timeline, fmtTime } from './timeline.js?v=11';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -90,7 +90,7 @@ const app = {
   history: [],
   hpos: -1,
   get duration() { return this.project?.meta.duration || 0; },
-  get time() { return video.currentTime || 0; },
+  get time() { return playbackTime(); },
   get playing() { return !video.paused && !video.ended; },
 
   seek(t) {
@@ -154,6 +154,27 @@ const app = {
 };
 
 const video = $('#video');
+
+// While playing, video.currentTime only moves when a new frame is decoded (and
+// can lag it), so animations stutter at the video's frame rate. Track the exact
+// time of each frame as it's shown and advance smoothly between frames, so the
+// preview animates at the screen's refresh rate, in step with the picture.
+let shownFrame = null; // { media: video time of the frame on screen, at: when it appeared }
+function playbackTime() {
+  if (!video.paused && shownFrame) {
+    const since = (performance.now() - shownFrame.at) / 1000;
+    if (since < 0.25) return shownFrame.media + Math.max(0, since) * video.playbackRate;
+  }
+  return video.currentTime || 0;
+}
+if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
+  const onFrame = (now, meta) => {
+    shownFrame = { media: meta.mediaTime, at: meta.expectedDisplayTime || now };
+    video.requestVideoFrameCallback(onFrame);
+  };
+  video.requestVideoFrameCallback(onFrame);
+}
+video.addEventListener('seeking', () => (shownFrame = null));
 const matte = $('#matte'); // the cut-out (white = subject), played in step with the video
 const overlay = $('#overlay');
 const timeline = new Timeline($('#timeline'), app);
@@ -540,12 +561,13 @@ function draw() {
   const t = app.time;
   const cap = captionAt(app.captions, t);
   const layers = cutoutLayers();
+  const gap = cap ? gapAfter(app.captions, cap) : Infinity;
   if (cap && layers && matte.readyState >= 2) {
     // behind-layer → cut the subject out of it → front-layer on top
-    drawCaption(ctx, W, H, cap, t, app.style, layers.behind);
+    drawCaption(ctx, W, H, cap, t, app.style, layers.behind, gap);
     cutCaptionsBehindSubject(ctx, W, H, cap);
-    if (layers.front.size) drawCaption(ctx, W, H, cap, t, app.style, layers.front);
-  } else drawCaption(ctx, W, H, cap, t, app.style);
+    if (layers.front.size) drawCaption(ctx, W, H, cap, t, app.style, layers.front, gap);
+  } else drawCaption(ctx, W, H, cap, t, app.style, null, gap);
 
   $('#time').textContent = `${fmtTime(t)} / ${fmtTime(app.duration)}`;
   timeline.setTime(t);
@@ -1182,10 +1204,10 @@ async function renderVideo({ target, clip = null, isCancelled, onProgress }) {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, W, canvas.height);
     ctx.translate(0, -band.top);
-    drawCaption(ctx, W, H, s.cap, s.t, app.style, layers?.behind);
+    drawCaption(ctx, W, H, s.cap, s.t, app.style, layers?.behind, s.gap);
     if (stacked) {
       ctx.translate(0, band.height);
-      drawCaption(ctx, W, H, s.cap, s.t, app.style, layers.front);
+      drawCaption(ctx, W, H, s.cap, s.t, app.style, layers.front, s.gap);
     }
     const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'));
     const name = `f${String(i).padStart(6, '0')}.png`;

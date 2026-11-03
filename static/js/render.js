@@ -77,12 +77,16 @@ export const PRESETS = {
     display: 'progressive', highlightMode: 'color', highlightColor: '#FFE600', strokeWidth: 12 },
 };
 
+// Short and snappy: a caption should be fully readable within a few frames of
+// the word being said. Outros only play before a real pause; back-to-back
+// captions cut cleanly instead of dipping to half-transparent at every change.
 export const ANIMATIONS = {
-  pop: { in: 0.15 },
-  fade: { in: 0.3, out: 0.2 },
-  rise: { in: 0.4, out: 0.2 },
+  pop: { in: 0.18 },
+  fade: { in: 0.12, out: 0.15 },
+  rise: { in: 0.2, out: 0.15 },
 };
-const WORD_IN = 0.3; // per-word fade when words appear as they're said
+const WORD_IN = 0.12; // per-word fade when words appear as they're said
+const OUTRO_GAP = 0.3; // a caption animates out only if this much silence follows
 
 // Older styles saved `uppercase: true/false`, and `behindSubject` for all words.
 export function normalizeStyle(s = {}) {
@@ -190,14 +194,23 @@ function rgba(hex, alpha) {
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 }
 
-const easeOut = (p) => 1 - (1 - Math.min(1, Math.max(0, p))) ** 3;
+const clamp01 = (p) => Math.min(1, Math.max(0, p));
+const easeOut = (p) => 1 - (1 - clamp01(p)) ** 3;
+const easeOutQuart = (p) => 1 - (1 - clamp01(p)) ** 4;
+// Overshoots by ~4% and settles: lively without wobbling.
+const easeOutBack = (p) => { const q = clamp01(p) - 1; return 1 + 2.2 * q ** 3 + 1.2 * q ** 2; };
 
 function popScale(dt) {
   const d = ANIMATIONS.pop.in;
   if (dt < 0 || dt >= d) return 1;
-  const p = dt / d;
-  if (p < 0.7) return 0.75 + 0.31 * easeOut(p / 0.7); // ease out to a small overshoot
-  return 1.06 - 0.06 * ((p - 0.7) / 0.3);
+  return 0.82 + 0.18 * easeOutBack(dt / d);
+}
+
+// Seconds of silence after `cap` before the next caption (Infinity if none).
+export function gapAfter(captions, cap) {
+  let next = Infinity;
+  for (const c of captions) if (c !== cap && c.start >= cap.start && c.start < next && c.words.length) next = c.start;
+  return Math.max(0, next - cap.end);
 }
 
 export function activeWordIndex(cap, t) {
@@ -259,24 +272,27 @@ function layout(ctx, cap, style, W, px, active = -1) {
   return { lines, height: y, width: Math.max(0, ...lines.map((l) => l.width)) };
 }
 
-function captionAnim(style, cap, t, px) {
+export function captionAnim(style, cap, t, px, gap) {
   const a = ANIMATIONS[style.animation];
   const out = { alpha: 1, scale: 1, dy: 0 };
   if (!a) return out;
-  if (style.animation === 'pop') out.scale = popScale(t - cap.start);
-  else {
-    const pin = easeOut((t - cap.start) / a.in);
-    const pout = Math.min(1, Math.max(0, (cap.end - t) / a.out));
-    out.alpha = Math.min(pin, pout);
-    if (style.animation === 'rise') out.dy = (1 - pin) * px * 0.45;
+  if (style.animation === 'pop') {
+    out.scale = popScale(t - cap.start);
+    out.alpha = clamp01((t - cap.start) / 0.06); // no hard flash at the smallest size
+    return out;
   }
+  const pin = clamp01((t - cap.start) / a.in);
+  const pout = gap >= OUTRO_GAP ? clamp01((cap.end - t) / a.out) : 1;
+  out.alpha = Math.min(easeOut(pin), easeOut(pout));
+  if (style.animation === 'rise') out.dy = (1 - easeOutQuart(pin)) * px * 0.25;
   return out;
 }
 
 // Draw one caption as it looks at time t, into a W×H video-sized coordinate space.
 // `only` (a Set of 'base' / 'accent') draws just those words, for layering
 // around a cut-out; the rest keep their places, so the layers line up exactly.
-export function drawCaption(ctx, W, H, cap, t, style, only = null) {
+// `gap`: seconds of silence after this caption (decides whether it animates out).
+export function drawCaption(ctx, W, H, cap, t, style, only = null, gap = Infinity) {
   if (!cap || !cap.words.length) return;
   const px = fontPx(style, W, H);
   const active = activeWordIndex(cap, t);
@@ -285,7 +301,7 @@ export function drawCaption(ctx, W, H, cap, t, style, only = null) {
   const top = cy - L.height / 2;
   const progressive = style.display === 'progressive';
   const shown = progressive ? Math.max(active, 0) : Infinity;
-  const anim = captionAnim(style, cap, t, px);
+  const anim = captionAnim(style, cap, t, px, gap);
   if (anim.alpha <= 0) return;
 
   ctx.save();
@@ -324,7 +340,7 @@ export function drawCaption(ctx, W, H, cap, t, style, only = null) {
         const ws = item.i === 0 ? cap.start : cap.words[item.i].start;
         const p = easeOut((t - ws) / WORD_IN);
         ctx.globalAlpha *= p;
-        ctx.translate(0, (1 - p) * rs.px * 0.25);
+        if (style.animation === 'rise') ctx.translate(0, (1 - easeOutQuart((t - ws) / WORD_IN)) * rs.px * 0.15);
       }
       if (item.i === active && style.activeScale !== 1) {
         ctx.translate(cx, mid);
@@ -380,12 +396,13 @@ export function exportStates(captions, style, fps) {
   const states = [];
   for (const cap of [...captions].sort((a, b) => a.start - b.start)) {
     if (cap.end - cap.start < 0.01 || !cap.words.length) continue;
+    const gap = gapAfter(captions, cap);
     const points = new Set([cap.start]);
     if (wordBased) cap.words.forEach((w) => { if (w.start > cap.start && w.start < cap.end) points.add(w.start); });
     // Animated stretches get one frame per video frame.
     const windows = [];
     if (anim?.in) windows.push([cap.start, cap.start + anim.in]);
-    if (anim?.out) windows.push([cap.end - anim.out, cap.end]);
+    if (anim?.out && gap >= OUTRO_GAP) windows.push([cap.end - anim.out, cap.end]);
     if (wordFade) cap.words.forEach((w, i) => windows.push([i ? w.start : cap.start, (i ? w.start : cap.start) + WORD_IN]));
     for (const [a, b] of windows) {
       for (let p = a; p < b; p += 1 / fps) if (p > cap.start && p < cap.end) points.add(p);
@@ -393,7 +410,7 @@ export function exportStates(captions, style, fps) {
     const sorted = [...points].sort((a, b) => a - b);
     sorted.forEach((p, i) => {
       const end = i + 1 < sorted.length ? sorted[i + 1] : cap.end;
-      if (end - p > 0.0005) states.push({ cap, start: p, end, t: p + 0.0005 });
+      if (end - p > 0.0005) states.push({ cap, start: p, end, t: p + 0.0005, gap });
     });
   }
   return states;
